@@ -24,7 +24,7 @@ void threadFuncion(size_t id)
 
 	for (size_t i = 0; i < 10; ++i) {
 		profiler::ProfilerGuard(id, i + 1);
-		std::this_thread::sleep_for (std::chrono::seconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
 
