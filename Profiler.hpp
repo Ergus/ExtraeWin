@@ -45,6 +45,12 @@ namespace profiler {
 
 #endif
 
+	unsigned long getMicrosecondsTime()
+	{
+		return std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now()).time_since_epoch().count();
+	}
+
+
     /**
        Buffer class to store the events.
 
@@ -67,13 +73,13 @@ namespace profiler {
             const char _id;
             const unsigned char _value;
 			const size_t _tid;
-			std::chrono::time_point<std::chrono::high_resolution_clock> _time;
+			const unsigned long _time;
 
             EventEntry(char id, unsigned char value, size_t tid)
                 : _id(id),
                   _value(value),
 				  _tid(tid),
-                  _time(std::chrono::high_resolution_clock::now())
+                  _time(getMicrosecondsTime())
             {
             }
         };
@@ -81,19 +87,19 @@ namespace profiler {
 		static constexpr size_t _maxEntries = ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);  //< Maximum size for the buffers ~ 1Mb >/
 
 		struct TraceHeader {
-			unsigned int _cpiID;
+			unsigned int _cpuID;
 			size_t _totalFlushed;
 
 			TraceHeader(TraceHeader&& other)
-				: _cpiID(other._cpiID),
+				: _cpuID(other._cpuID),
 				  _totalFlushed(other._totalFlushed)
 			{
-				other._cpiID = std::numeric_limits<unsigned int>::max();
+				other._cpuID = std::numeric_limits<unsigned int>::max();
 				other._totalFlushed = 0;
 			}
 
 			TraceHeader()
-				: _cpiID(getCPUId()),
+				: _cpuID(getCPUId()),
 				  _totalFlushed(0)
 			{}
 		} _header;
@@ -203,6 +209,7 @@ namespace profiler {
 
 			// This AFTER _file to destroy in right order (RAII)
 			std::vector<buffer_t> _profileBuffers;
+
         };
 
         const char _id;
