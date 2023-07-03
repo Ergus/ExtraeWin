@@ -3,7 +3,7 @@ MAIN:=main.x
 
 all: $(MAIN)
 
-%.x: %.o
+%.x: %.o Profiler.hpp
 	$(CXX) $< -o $@
 
 .PHONY: clean cleanall test
@@ -12,7 +12,7 @@ clean:
 	rm -f *.x
 
 cleanall:
-	rm -f *.x *.bin *.txt
+	rm -rf *.x *.bin *.txt TRACEDIR*
 
 test: $(MAIN)
 	./$(MAIN)

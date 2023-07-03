@@ -1,3 +1,5 @@
+#pragma once
+
 #include <iostream>
 #include <string.h>
 #include <vector>
@@ -6,8 +8,13 @@
 #include <chrono>
 #include <mutex>
 #include <thread>
+#include <filesystem>
+#include <sstream>
+#include <iomanip>
 
 namespace profiler {
+
+	namespace fs = std::filesystem;
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
@@ -15,13 +22,13 @@ namespace profiler {
 	#include <winbase.h>
 	#include <windows.h>
 
-	int getNumberOfCores() {
+	inline int getNumberOfCores() {
 		SYSTEM_INFO sysinfo;
 		GetSystemInfo(&sysinfo);
 		return sysinfo.dwNumberOfProcessors;
 	}
 
-	unsigned int getCPUId()
+	inline unsigned int getCPUId()
 	{
 		PROCESSOR_NUMBER procNumber;
 		GetCurrentProcessorNumberEx(&procNumber);
@@ -32,11 +39,11 @@ namespace profiler {
 
 	#include <unistd.h>
 
-	int getNumberOfCores() {
+	inline int getNumberOfCores() {
 		return sysconf(_SC_NPROCESSORS_ONLN);
 	}
 
-	unsigned int getCPUId()
+	inline unsigned int getCPUId()
 	{
 		const int cpu = sched_getcpu();
 		assert(cpu >= 0);
@@ -45,9 +52,10 @@ namespace profiler {
 
 #endif
 
-	unsigned long getMicrosecondsTime()
+	template<typename clocktype>
+	inline unsigned long getMicroseconds(const std::chrono::time_point<clocktype> &timePoint)
 	{
-		return std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now()).time_since_epoch().count();
+		return std::chrono::time_point_cast<std::chrono::microseconds>(timePoint).time_since_epoch().count();
 	}
 
 
@@ -75,16 +83,26 @@ namespace profiler {
 			const unsigned long _tid;
 			const unsigned long _time;
 
-			EventEntry(int id, unsigned int value, unsigned long tid)
+			EventEntry(int id, unsigned int value, unsigned long tid, unsigned long time)
 				: _id(id),
 				  _value(value),
 				  _tid(tid),
-				  _time(getMicrosecondsTime())
+				  _time(time)
 			{
 			}
+
+			EventEntry(int id, unsigned int value, unsigned long tid)
+				: EventEntry(id,
+				             value,
+				             tid,
+				             getMicroseconds(std::chrono::high_resolution_clock::now()))
+			{
+			}
+
 		};
 
-		static constexpr size_t _maxEntries = ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);	 //< Maximum size for the buffers ~ 1Mb >/
+		static constexpr size_t _maxEntries
+			= ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);	 //< Maximum size for the buffers ~ 1Mb >/
 
 		struct TraceHeader {
 			unsigned int _cpuID;
@@ -98,8 +116,8 @@ namespace profiler {
 				other._totalFlushed = 0;
 			}
 
-			TraceHeader()
-				: _cpuID(getCPUId()),
+			explicit TraceHeader(unsigned int cpuID)
+				: _cpuID(cpuID),
 				  _totalFlushed(0)
 			{}
 		} _header;
@@ -120,9 +138,9 @@ namespace profiler {
 
 	  public:
 
-		explicit Buffer(size_t cpuIdx)
-			: _header(),
-			  _fileName("Trace_" + std::to_string(cpuIdx) + ".bin"),
+		explicit Buffer(unsigned int cpuID, const std::string &fileName)
+			: _header(cpuID),
+			  _fileName(fileName),
 			  _file(_fileName.c_str(), std::ios::out | std::ios::binary),
 			  _entries()
 		{
@@ -135,7 +153,7 @@ namespace profiler {
 			// The -1 event is the global execution event.
 			// We use it to measure the total time and rely on constructors/destructors
 			// of static members (the singleton) to register them.
-			emplace(-1, 1, 0);
+			emplace(-1, 1, 0, getMicroseconds(std::chrono::system_clock::now()));
 
 		}
 
@@ -157,12 +175,13 @@ namespace profiler {
 		/**
 		   Add (report) a new event.
 
-		   This adds a new entry in the buffer with a value and id. when id is zero it means that it
-		   is the end of the event
+		   This adds a new entry in the buffer with a value and id. when id is
+		   zero it means that it is the end of the event
 		*/
-		void emplace(int id, unsigned int value, unsigned long tid)
+		template <typename ...T>
+		void emplace(T&&... args)
 		{
-			_entries.emplace_back(id, value, tid);
+			_entries.emplace_back(std::forward<T>(args)...);
 
 			if (_entries.size() >= _maxEntries)
 				flushBuffer();
@@ -180,12 +199,27 @@ namespace profiler {
 			using buffer_t = Buffer<BUFFERSIZE>;
 
 			BufferSet() :
-				_size(getNumberOfCores()),
-				_file("Trace.txt", std::ios::out)
+				_startTimePoint(std::chrono::system_clock::now()),
+				_size(getNumberOfCores())
 			{
+				auto localTime = std::chrono::system_clock::to_time_t(_startTimePoint);
+
+				std::stringstream ss;
+				ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
+				_traceDirectory = ss.str();
+
+				// Create the directory
+				if (!std::filesystem::create_directory(_traceDirectory))
+					throw  std::runtime_error("Cannot create traces directory: " + _traceDirectory);
+
+				_file.open(_traceDirectory + "/Trace.txt", std::ios::out);
 				assert(_file.is_open());
+
 				for (size_t i = 0; i < _size; ++i)
-					_profileBuffers.emplace_back(i);
+				{
+					const std::string fileNamei = _traceDirectory + "/Trace_" + std::to_string(i) + ".bin";
+					_profileBuffers.emplace_back(i, fileNamei);
+				}
 			}
 
 			void AddReport(const std::string& filename)
@@ -202,6 +236,8 @@ namespace profiler {
 			}
 
 		  private:
+			std::chrono::time_point<std::chrono::system_clock> _startTimePoint;
+			std::string _traceDirectory;
 			const size_t _size;
 
 			std::mutex _fileMutex;	 //< mutex needed to write in the global file >/
@@ -259,7 +295,7 @@ namespace profiler {
 		// The -1 event is the global execution event.
 		// We use it to measure the total time and rely on constructors/destructors
 		// of static members (the singleton) to register them.
-		emplace(-1, 0, 0);
+		emplace(-1, 0, 0, getMicroseconds(std::chrono::system_clock::now()));
 
 		flushBuffer(); // Flush all remaining events
 		_file.seekp(0);
