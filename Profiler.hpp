@@ -78,24 +78,30 @@ namespace profiler {
 		   threadId with every event in order to make a right reconstruction latter.
 		 */
 		struct EventEntry {
-			const int _id;
-			const unsigned int _value;
-			const unsigned long _tid;
-			const unsigned long _time;
+			const int8_t _id;
+			const uint8_t _value;
+			const uint16_t _core;
+			const uint32_t _tid;
+			const uint32_t _time;
 
-			EventEntry(int id, unsigned int value, unsigned long tid, unsigned long time)
-				: _id(id),
+			explicit EventEntry(
+				uint16_t core, uint32_t tid, int8_t id, uint8_t value, uint32_t time
+			) : _id(id),
 				  _value(value),
+				  _core(core),
 				  _tid(tid),
 				  _time(time)
 			{
 			}
 
-			EventEntry(int id, unsigned int value, unsigned long tid)
-				: EventEntry(id,
-				             value,
-				             tid,
-				             getMicroseconds(std::chrono::high_resolution_clock::now()))
+			explicit EventEntry(
+				uint16_t core, uint32_t tid, int8_t id, uint8_t value
+			) : EventEntry(
+					core,
+					tid,
+					id,
+					value,
+					getMicroseconds(std::chrono::high_resolution_clock::now()))
 			{
 			}
 
@@ -105,8 +111,8 @@ namespace profiler {
 			= ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);	 //< Maximum size for the buffers ~ 1Mb >/
 
 		struct TraceHeader {
-			unsigned int _cpuID;
-			unsigned long _totalFlushed;
+			uint32_t _cpuID;
+			uint32_t _totalFlushed;
 
 			TraceHeader(TraceHeader&& other)
 				: _cpuID(other._cpuID),
@@ -138,7 +144,7 @@ namespace profiler {
 
 	  public:
 
-		explicit Buffer(unsigned int cpuID, const std::string &fileName)
+		explicit Buffer(uint32_t cpuID, const std::string &fileName)
 			: _header(cpuID),
 			  _fileName(fileName),
 			  _file(_fileName.c_str(), std::ios::out | std::ios::binary),
@@ -153,8 +159,7 @@ namespace profiler {
 			// The -1 event is the global execution event.
 			// We use it to measure the total time and rely on constructors/destructors
 			// of static members (the singleton) to register them.
-			emplace(-1, 1, 0, getMicroseconds(std::chrono::system_clock::now()));
-
+			emplace(cpuID, 0, -1, 1, getMicroseconds(std::chrono::system_clock::now()));
 		}
 
 		Buffer(Buffer&& other)
@@ -182,6 +187,9 @@ namespace profiler {
 		void emplace(T&&... args)
 		{
 			_entries.emplace_back(std::forward<T>(args)...);
+
+			// Assert that the element inserted belongs to this core.
+			assert(_entries.back()._core == _header._cpuID);
 
 			if (_entries.size() >= _maxEntries)
 				flushBuffer();
@@ -229,10 +237,10 @@ namespace profiler {
 				_file << filename << std::endl;
 			}
 
-			inline buffer_t &operator[](size_t idx)
+			inline buffer_t &operator[](uint16_t coreIdx)
 			{
-				assert(idx < _size);
-				return _profileBuffers[idx];
+				assert(coreIdx < _size);
+				return _profileBuffers[coreIdx];
 			}
 
 		  private:
@@ -253,8 +261,8 @@ namespace profiler {
 
 		static void registerNewEvent(int id, unsigned int value, unsigned long tid)
 		{
-			unsigned int cpu = getCPUId();
-			_singleton[cpu].emplace(id, value, tid);
+			uint16_t cpu = getCPUId();
+			_singleton[cpu].emplace(cpu, tid, id, value);
 		}
 
 	  public:
@@ -271,6 +279,7 @@ namespace profiler {
 
 		~ProfilerGuard()
 		{
+			assert(std::hash<std::thread::id>()(std::this_thread::get_id()) == _tid);
 			registerNewEvent(_id, 0, _tid);
 		}
 
@@ -295,7 +304,7 @@ namespace profiler {
 		// The -1 event is the global execution event.
 		// We use it to measure the total time and rely on constructors/destructors
 		// of static members (the singleton) to register them.
-		emplace(-1, 0, 0, getMicroseconds(std::chrono::system_clock::now()));
+		emplace(_header._cpuID, 0, -1, 0, getMicroseconds(std::chrono::system_clock::now()));
 
 		flushBuffer(); // Flush all remaining events
 		_file.seekp(0);
