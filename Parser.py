@@ -10,8 +10,14 @@ import datetime as dt
 
 class ParsedTraces:
     '''Class with imported information from trace binary file.'''
-    headerType = struct.Struct("I I")
-    eventType = np.dtype([('id', 'i1'), ('value', 'u1'), ('core', 'u2'), ('tid', 'u4'), ('time', 'u4')])
+    headerType = struct.Struct("I I Q")
+
+    eventType \
+        = np.dtype([('time', 'u4'),
+                    ('id', 'u1'),
+                    ('value', 'u1'),
+                    ('core', 'u1'),
+                    ('tid', 'u1')])
 
     def __init__(self):
         self.traceDict = {}
@@ -26,29 +32,35 @@ class ParsedTraces:
 
         # Read only the header information before importing
         with open(trace_file_name, "rb") as traceFile:
-            cpu, nevents \
+            id, nevents, tid \
                 = ParsedTraces.headerType.unpack(traceFile.read(headerSize))
 
+        print(id, tid, nevents)
+
         # Now import the rest of the trace in a numpy array
-        self.traceDict[cpu] \
-            = np.fromfile(trace_file_name, ParsedTraces.eventType,
-                          nevents, "", headerSize)
+        self.traceDict[id] \
+            = np.fromfile(trace_file_name,
+                          ParsedTraces.eventType,
+                          nevents,
+                          "",
+                          headerSize)
 
-        # Now check the boundaries and expand them if needed
-        first = self.traceDict[cpu][0]
-        if not self.startEvent or first['time'] < self.startEvent['time']:
-            self.startEvent = first.copy()
+        # Now check the boundaries on the first thread
+        if (id == 0):
+            self.startEvent = self.traceDict[0][0].copy()
+            self.lastEvent = self.traceDict[0][-1].copy()
 
-        last = self.traceDict[cpu][-1]
-        if not self.lastEvent or last['time'] > self.lastEvent['time']:
-            self.lastEvent = last.copy()
+        self.threadList.append(id)
 
-        # get the indices of the first unique tids
+        # get the indices of the first unique cores
         indices \
-            = np.unique(self.traceDict[cpu][:]['tid'], return_index=True)[1]
+            = np.unique(self.traceDict[id][:]['core'], return_index=True)[1]
 
-        tids = self.traceDict[cpu][sorted(indices)]['tid']
-        self.threadList += [i for i in tids if i not in self.threadList]
+        cores = self.traceDict[id][sorted(indices)]['core']
+
+        self.coresList += [i for i in cores if i not in self.coresList]
+
+        print(self.coresList)
 
     def _getHeaderLine(self):
         '''Print the Paraver Header'''
@@ -58,7 +70,7 @@ class ParsedTraces:
         start = self.startEvent['time']/1000000
         date = dt.datetime.fromtimestamp(start).strftime('%d/%m/%Y at %H:%M')
 
-        cores = len(self.traceDict)
+        cores = len(self.coresList)
 
         threads = len(self.threadList)
 
@@ -70,17 +82,13 @@ class ParsedTraces:
         # type:cpu:app:task:thread:time:event:value
         return f"2:{event['core']}:1:1:{event['tid']}:{event['time']}:{event['id']}:{event['value']}"
 
-    def _processEvent(self, input, tidMap):
-        output = input.copy()
-        output['core'] += 1
-        output['time'] -= self.startEvent['time']
-        output['tid'] = tidMap[input['tid']]
-
-        return output
-
     @staticmethod
     def __mergeTwo(a, b):
-        """Merge two trace containers respecting the order"""
+        """Merge two trace containers respecting the order
+        
+        This is usually the last step in a merge sort code, I am
+        actually surprised that numpy does not provide such feature.
+        """
         merged = np.zeros(len(a) + len(b), dtype=ParsedTraces.eventType)
 
         it = ita = itb = 0
@@ -125,17 +133,22 @@ class ParsedTraces:
 
         return merged[0]
 
+    def _processEvent(self, input):
+        output = input.copy()
+        output['core'] += 1
+        output['time'] -= self.startEvent['time']
+        output['tid'] += 1
+
+        return output
+
     def __str__(self):
         '''Get the full trace'''
         merged = self._merge()
 
-        tidMap = {v: k for k, v in enumerate(self.threadList)}
-
         ret = self._getHeaderLine() + "\n"
         for event in merged:
-            if event['id'] >= 0:
-                tmp = self._processEvent(event, tidMap)
-                ret += ParsedTraces._eventToStr(tmp) + "\n"
+            tmp = self._processEvent(event)
+            ret += ParsedTraces._eventToStr(tmp) + "\n"
 
         return ret
 
