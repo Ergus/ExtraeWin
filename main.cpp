@@ -20,10 +20,10 @@
 
 void threadFuncion(size_t id)
 {
-	profiler::ProfilerGuard(100, id + 1);
+	auto guard1 = profiler::ProfilerGuard(100, id + 1);
 
 	for (size_t i = 0; i < 10; ++i) {
-		profiler::ProfilerGuard(id, i + 1);
+		auto guard2 = profiler::ProfilerGuard(id, i + 1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
