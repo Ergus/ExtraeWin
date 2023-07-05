@@ -10,17 +10,17 @@ import datetime as dt
 
 class ParsedTraces:
     '''Class with imported information from trace binary file.'''
-    headerType = struct.Struct("I I Q")
+    headerType = struct.Struct("I I Q Q")
 
-    eventType \
-        = np.dtype([('time', 'u4'),
-                    ('id', 'u1'),
-                    ('value', 'u1'),
-                    ('core', 'u1'),
-                    ('tid', 'u1')])
+    eventType = np.dtype([('time', 'u4'),
+                          ('id', 'u1'),
+                          ('value', 'u1'),
+                          ('core', 'u1'),
+                          ('tid', 'u1')])
 
     def __init__(self):
         self.traceDict = {}
+        self.startGlobalTime = 0
         self.startEvent = None
         self.lastEvent = None
         self.nevents = 0
@@ -33,10 +33,8 @@ class ParsedTraces:
 
         # Read only the header information before importing
         with open(trace_file_name, "rb") as traceFile:
-            id, nevents, tid \
+            id, nevents, tid, startGTime \
                 = ParsedTraces.headerType.unpack(traceFile.read(headerSize))
-
-        print(id, tid, nevents)
 
         # Now import the rest of the trace in a numpy array
         self.traceDict[id] \
@@ -49,7 +47,8 @@ class ParsedTraces:
         # Now check the boundaries on the first thread
         if (id == 1):
             self.startEvent = self.traceDict[1][0].copy()
-            self.lastEvent = self.traceDict[0][-1].copy()
+            self.lastEvent = self.traceDict[1][-1].copy()
+            self.startGlobalTime = startGTime
 
         self.threadList.append(id)
 
@@ -61,14 +60,14 @@ class ParsedTraces:
 
         self.coresList += [i for i in cores if i not in self.coresList]
 
-        print(self.coresList)
-
     def _getHeaderLine(self):
-        '''Print the Paraver Header'''
+        '''Get the Paraver formatted Header'''
         # Paraver (dd/mm/yy at hh:mm):time:nNodes(nCpus1,...,nCpusN):nApps:app1[...]
+        assert self.startGlobalTime != 0, "No main thread (id == 1) info set"
+
         elapsed = self.lastEvent['time'] - self.startEvent['time']
 
-        start = self.startEvent['time']/1000000
+        start = self.startGlobalTime/1000000
         date = dt.datetime.fromtimestamp(start).strftime('%d/%m/%Y at %H:%M')
 
         cores = len(self.coresList)
@@ -78,15 +77,9 @@ class ParsedTraces:
         return f"#Paraver ({date}):{elapsed}:1({cores}):1:1({threads}:1)"
 
     @staticmethod
-    def _eventToStr(event):
-        '''Print an event'''
-        # type:cpu:app:task:thread:time:event:value
-        return f"2:{event['core']}:1:1:{event['tid']}:{event['time']}:{event['id']}:{event['value']}"
-
-    @staticmethod
     def __mergeTwo(a, b):
         """Merge two trace containers respecting the order
-        
+
         This is usually the last step in a merge sort code, I am
         actually surprised that numpy does not provide such feature.
         """
@@ -119,7 +112,8 @@ class ParsedTraces:
         """Create a contiguous list with all the events merged
 
         This merged the arrays by pairs in order to reduce the worst case merge
-        conditions where the merge arrays grow too much."""
+        conditions where the merge arrays grow too much.
+        """
         assert self.startEvent  # if this fails there was not thread zero file
 
         traces = list(self.traceDict.values())
@@ -136,12 +130,10 @@ class ParsedTraces:
 
         return merged[0]
 
-    def _processEvent(self, input):
-        '''This modifies some events details, these fixes will be '''
-        output = input.copy()
-        output['time'] -= self.startEvent['time']
-
-        return output
+    def _eventToStr(self, event):
+        '''Print an event'''
+        # type:cpu:app:task:thread:time:event:value
+        return f"2:{event['core']}:1:1:{event['tid']}:{event['time'] - self.startEvent['time']}:{event['id']}:{event['value']}"
 
     def __str__(self):
         '''Get the full trace'''
@@ -149,8 +141,7 @@ class ParsedTraces:
 
         ret = self._getHeaderLine() + "\n"
         for event in merged:
-            tmp = self._processEvent(event)
-            ret += ParsedTraces._eventToStr(tmp) + "\n"
+            ret += self._eventToStr(event) + "\n"
 
         return ret
 
