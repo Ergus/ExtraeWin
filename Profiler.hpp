@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#include <map>
+#include <shared_mutex>
 
 namespace profiler {
 
@@ -68,6 +70,28 @@ namespace profiler {
 	template <size_t BUFFERSIZE>
 	class Buffer {
 
+		struct TraceHeader {
+			uint32_t _id;   // Can be cpuID or ThreadID
+			uint32_t _totalFlushed;
+			uint64_t _tid;
+
+			TraceHeader(TraceHeader&& other)
+				: _id(other._id),
+				  _tid(other._tid),
+				  _totalFlushed(other._totalFlushed)
+			{
+				other._id = std::numeric_limits<unsigned int>::max();
+				other._tid = std::numeric_limits<unsigned int>::max();
+				other._totalFlushed = 0;
+			}
+
+			TraceHeader(uint32_t id, uint64_t tid)
+				: _id(id), _tid(tid), _totalFlushed(0)
+			{}
+
+		} _header;
+
+
 		/**
 		   Event struct that will be reported (and saved into the traces files in binary format)
 
@@ -78,55 +102,21 @@ namespace profiler {
 		   threadId with every event in order to make a right reconstruction latter.
 		 */
 		struct EventEntry {
+			const uint32_t _time;
 			const uint8_t _id;
 			const uint8_t _value;
-			const uint16_t _core;
-			const uint32_t _tid;
-			const uint32_t _time;
+			const uint8_t _core;
+			const uint8_t _thread;
 
 			explicit EventEntry(
-				uint16_t core, uint32_t tid, int8_t id, uint8_t value, uint32_t time
-			) : _id(id),
-				  _value(value),
-				  _core(core),
-				  _tid(tid),
-				  _time(time)
+				uint32_t time, int8_t id, uint8_t value,  uint8_t core, uint8_t thread
+			) : _time(time), _id(id), _value(value), _core(core), _thread(thread)
 			{
 			}
-
-			explicit EventEntry(
-				uint16_t core, uint32_t tid, uint8_t id, uint8_t value
-			) : EventEntry(
-					core,
-					tid,
-					id,
-					value,
-					getMicroseconds(std::chrono::high_resolution_clock::now()))
-			{
-			}
-
 		};
 
 		static constexpr size_t _maxEntries
 			= ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);	 //< Maximum size for the buffers ~ 1Mb >/
-
-		struct TraceHeader {
-			uint32_t _cpuID;
-			uint32_t _totalFlushed;
-
-			TraceHeader(TraceHeader&& other)
-				: _cpuID(other._cpuID),
-				  _totalFlushed(other._totalFlushed)
-			{
-				other._cpuID = std::numeric_limits<unsigned int>::max();
-				other._totalFlushed = 0;
-			}
-
-			explicit TraceHeader(unsigned int cpuID)
-				: _cpuID(cpuID),
-				  _totalFlushed(0)
-			{}
-		} _header;
 
 		const std::string _fileName;  //< Name of the binary file with trace information
 		std::ofstream _file;		  //< fstream with file open; every write will be appended and binary. >/
@@ -144,23 +134,7 @@ namespace profiler {
 
 	  public:
 
-		explicit Buffer(uint32_t cpuID, const std::string &fileName)
-			: _header(cpuID),
-			  _fileName(fileName),
-			  _file(_fileName.c_str(), std::ios::out | std::ios::binary),
-			  _entries()
-		{
-			_entries.reserve(_maxEntries);
-			assert(_file.is_open());
-
-			// Reserve size for the header
-			_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
-
-			// The -1 event is the global execution event.
-			// We use it to measure the total time and rely on constructors/destructors
-			// of static members (the singleton) to register them.
-			emplace(cpuID, 0, 0, 1, getMicroseconds(std::chrono::system_clock::now()));
-		}
+		Buffer(uint32_t id, uint64_t tid, std::string fileName);
 
 		Buffer(Buffer&& other)
 			: _header(std::move(other._header)),
@@ -169,6 +143,7 @@ namespace profiler {
 			  _entries(std::move(other._entries))
 		{
 		}
+
 
 		/**
 		   Destructor for the buffer type.
@@ -186,36 +161,73 @@ namespace profiler {
 		template <typename ...T>
 		void emplace(T&&... args)
 		{
-			_entries.emplace_back(std::forward<T>(args)...);
-
-			// Assert that the element inserted belongs to this core.
-			assert(_entries.back()._core == _header._cpuID);
+			_entries.emplace_back(std::forward<T>(args)..., _header._id);
 
 			if (_entries.size() >= _maxEntries)
 				flushBuffer();
 
 			assert(_entries.size() < _maxEntries);
 		}
-	};
+
+		void emplace2(uint8_t id, uint8_t value)
+		{
+			this->emplace(
+				getMicroseconds(std::chrono::high_resolution_clock::now()),
+				id,
+				value,
+				getCPUId()
+			);
+		}
+
+		const TraceHeader &getHeader() const
+		{
+			return _header;
+		}
+	}; // Buffer
 
 	template<size_t BUFFERSIZE = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
 
+		class InfoThread
+		{
+		public:
+			const size_t _tid;
+			Buffer<BUFFERSIZE> &_threadBuffer;
+
+			InfoThread()
+				: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
+				  _threadBuffer(ProfilerGuard::_singleton.getEventsMap(_tid))
+			{
+				assert(_tid == _threadBuffer.getHeader()._tid);
+				_threadBuffer.emplace2(2, 1);
+			}
+
+			~InfoThread()
+			{
+				_threadBuffer.emplace2(2, 0);
+			}
+
+		};
+
+
 		class BufferSet {
+			static std::string getTraceDirectory(
+				std::chrono::time_point<std::chrono::system_clock> startTimePoint
+			)
+			{
+				auto localTime = std::chrono::system_clock::to_time_t(startTimePoint);
+				std::stringstream ss;
+				ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
+				return ss.str();
+			}
+
 
 		  public:
-			using buffer_t = Buffer<BUFFERSIZE>;
 
 			BufferSet() :
 				_startTimePoint(std::chrono::system_clock::now()),
-				_size(getNumberOfCores())
+				_traceDirectory(getTraceDirectory(_startTimePoint))
 			{
-				auto localTime = std::chrono::system_clock::to_time_t(_startTimePoint);
-
-				std::stringstream ss;
-				ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
-				_traceDirectory = ss.str();
-
 				// Create the directory
 				if (!std::filesystem::create_directory(_traceDirectory))
 					throw  std::runtime_error("Cannot create traces directory: " + _traceDirectory);
@@ -223,11 +235,23 @@ namespace profiler {
 				_file.open(_traceDirectory + "/Trace.txt", std::ios::out);
 				assert(_file.is_open());
 
-				for (size_t i = 0; i < _size; ++i)
-				{
-					const std::string fileNamei = _traceDirectory + "/Trace_" + std::to_string(i) + ".bin";
-					_profileBuffers.emplace_back(i, fileNamei);
-				}
+				// Event 1 is the start moment (to compute the whole trace execution)
+				ProfilerGuard::_singletonThread._threadBuffer.emplace(
+					getMicroseconds(std::chrono::system_clock::now()),
+					1,
+					1,
+					getCPUId()
+				);
+			}
+
+			~BufferSet()
+			{
+				ProfilerGuard::_singletonThread._threadBuffer.emplace(
+					getMicroseconds(std::chrono::system_clock::now()),
+					1,
+					0,
+					getCPUId()
+				);
 			}
 
 			void AddReport(const std::string& filename)
@@ -237,57 +261,115 @@ namespace profiler {
 				_file << filename << std::endl;
 			}
 
-			inline buffer_t &operator[](uint16_t coreIdx)
+			/**
+			   Get the Buffer_t associated with a thread id hash
+
+			   The threadIds are usually reused after a thread is destroyed.
+			   Opening/closing files on every thread creation/deletion may be
+			   too expensive; especially if the threads are created destroyed
+			   very frequently.
+
+			   We keep the associative map <tid, Buffer> in order to reuse
+			   Buffer and only execute IO operations when the buffer is full or
+			   at the end of the execution.
+
+			   The extra cost for this is that we need to take a lock once (on
+			   thread construction or when emitting the first event from a
+			   thread) in order to get it's associated buffer.  This function is
+			   responsible to take the lock and return the associated buffer.
+			   When a threadId is seen for a first time this function creates
+			   the new entry in the map, construct the Buffer and assign an
+			   ordinal id for it.  Any optimization here will be very welcome.
+			 */
+			Buffer<BUFFERSIZE> &getEventsMap(size_t tid)
 			{
-				assert(coreIdx < _size);
-				return _profileBuffers[coreIdx];
+				// We attempt to tale the read lock first. If this tid was
+				// already used, the buffer must be already created, and we
+				// don't need the exclusive access.
+				std::shared_lock sharedlock(_mapMutex);
+				auto it = _eventsMap.lower_bound(tid);
+
+				if (it != _eventsMap.end() && it->first == tid)
+					return it->second;
+
+				// Else, this is the first time we use this tid, so, we need
+				// exclusive access to modify the map. So, let's release the
+				// read lock and try to take the write (unique) lock.
+				sharedlock.release();
+				_mapMutex.unlock_shared();
+				std::unique_lock uniquelock(_mapMutex);
+
+				std::string filename
+					= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
+
+				it = _eventsMap.try_emplace(it, tid, _tcounter++, tid, filename);
+
+				return it->second;
 			}
 
 		  private:
-			std::chrono::time_point<std::chrono::system_clock> _startTimePoint;
-			std::string _traceDirectory;
-			const size_t _size;
+			const std::chrono::time_point<std::chrono::system_clock> _startTimePoint;
+			const std::string _traceDirectory;
 
 			std::mutex _fileMutex;	 //< mutex needed to write in the global file >/
 			std::ofstream _file;
 
-			// This AFTER _file to destroy in right order (RAII)
-			std::vector<buffer_t> _profileBuffers;
-
+			mutable std::shared_mutex _mapMutex;	 //< mutex needed to write in the global file >/
+			std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap;
+			uint32_t _tcounter = 0;
 		};
 
 		const uint8_t _id;
-		const uint32_t _tid;
 
-		static void registerNewEvent(uint8_t id, uint8_t value, uint32_t tid)
+		static void registerNewEvent(uint8_t id, uint8_t value)
 		{
-			uint16_t cpu = getCPUId();
-			_singleton[cpu].emplace(cpu, tid, id, value);
+			_singletonThread._threadBuffer.emplace2(id, value);
 		}
 
 	  public:
 
 		static BufferSet _singleton;
+		thread_local static InfoThread _singletonThread;
+
+		ProfilerGuard(const ProfilerGuard &) = delete;
+		ProfilerGuard& operator=(const ProfilerGuard &) = delete;
 
 		ProfilerGuard(uint8_t id, uint8_t value)
-			: _id(id),
-			  _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
+			: _id(id)
 		{
 			assert(value != 0);
-			registerNewEvent(_id, value, _tid);
+			_singletonThread._threadBuffer.emplace2(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			assert(std::hash<std::thread::id>()(std::this_thread::get_id()) == _tid);
-			registerNewEvent(_id, 0, _tid);
+			assert(std::hash<std::thread::id>()(std::this_thread::get_id()) == _singletonThread._tid);
+			_singletonThread._threadBuffer.emplace2(_id, 0);
 		}
 
-	};
+	}; // ProfilerGuard
 
+	// Outline constructors.
 	template <size_t T>
 	typename ProfilerGuard<T>::BufferSet ProfilerGuard<T>::_singleton;
 
+	template <size_t T>
+	thread_local typename ProfilerGuard<T>::InfoThread ProfilerGuard<T>::_singletonThread;
+
+	template <size_t BUFFERSIZE>
+	Buffer<BUFFERSIZE>::Buffer(uint32_t id, uint64_t tid, std::string fileName)
+		: _header(id, tid),
+		  _fileName(std::move(fileName)),
+		  _entries(),
+		  _file(_fileName, std::ios::out | std::ios::binary)
+	{
+		// Reserve space for the header
+		_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
+
+		// Reseerve memory for the buffer.
+		_entries.reserve(_maxEntries);
+		assert(_file.is_open());
+	}
 
 	// This is declared outside the class because it calls members of ProfilerGuard singleton.
 	template <size_t BUFFERSIZE>
@@ -300,11 +382,6 @@ namespace profiler {
 			assert(_entries.size() == 0);
 			return;
 		}
-
-		// The -1 event is the global execution event.
-		// We use it to measure the total time and rely on constructors/destructors
-		// of static members (the singleton) to register them.
-		emplace(_header._cpuID, 0, 0, 0, getMicroseconds(std::chrono::system_clock::now()));
 
 		flushBuffer(); // Flush all remaining events
 		_file.seekp(0);
