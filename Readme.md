@@ -25,5 +25,10 @@ The basic steps are:
 	Parser.py TRACEDIR_timestamp
 	```
 
-	This will create a [Paraver](https://tools.bsc.es/paraver) trace.
+	This will create a [Paraver](https://tools.bsc.es/paraver) trace: 
 
+	```
+	TRACEDIR_timestamp/Trace.prv
+	```
+
+You can open that file with wxparaver.
