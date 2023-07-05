@@ -30,11 +30,14 @@ namespace profiler {
 		return sysinfo.dwNumberOfProcessors;
 	}
 
+	/**
+	   Return the cpuID starting by 1
+	 */
 	inline unsigned int getCPUId()
 	{
 		PROCESSOR_NUMBER procNumber;
 		GetCurrentProcessorNumberEx(&procNumber);
-		return procNumber.Group * 64 + procNumber.Number;
+		return procNumber.Group * 64 + procNumber.Number + 1;
 	}
 
 #else
@@ -45,11 +48,14 @@ namespace profiler {
 		return sysconf(_SC_NPROCESSORS_ONLN);
 	}
 
+	/**
+	   Return the cpuID starting by 1
+	 */
 	inline unsigned int getCPUId()
 	{
 		const int cpu = sched_getcpu();
 		assert(cpu >= 0);
-		return cpu;
+		return cpu + 1;
 	}
 
 #endif
@@ -145,11 +151,7 @@ namespace profiler {
 		}
 
 
-		/**
-		   Destructor for the buffer type.
-
-		   Declared outside in order to call singleton functions.
-		*/
+		/** Destructor for the buffer type. */
 		~Buffer();
 
 		/**
@@ -235,9 +237,12 @@ namespace profiler {
 				_file.open(_traceDirectory + "/Trace.txt", std::ios::out);
 				assert(_file.is_open());
 
+				// This event is to record the monolitic time
+				ProfilerGuard::_singletonThread._threadBuffer.emplace(0,0);
+
 				// Event 1 is the start moment (to compute the whole trace execution)
 				ProfilerGuard::_singletonThread._threadBuffer.emplace(
-					getMicroseconds(std::chrono::system_clock::now()),
+					getMicroseconds(_startTimePoint),
 					1,
 					1,
 					getCPUId()
@@ -316,7 +321,7 @@ namespace profiler {
 
 			mutable std::shared_mutex _mapMutex;	 //< mutex needed to write in the global file >/
 			std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap;
-			uint32_t _tcounter = 0;
+			uint32_t _tcounter = 1;  // Start on 1 because paraver uses 1 start index
 		};
 
 		const uint8_t _id;

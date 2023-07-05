@@ -28,6 +28,7 @@ class ParsedTraces:
         self.coresList = []
 
     def addTraceFile(self, trace_file_name):
+        '''Parse a trace file and load it into memory.'''
         headerSize: int = ParsedTraces.headerType.size
 
         # Read only the header information before importing
@@ -46,8 +47,8 @@ class ParsedTraces:
                           headerSize)
 
         # Now check the boundaries on the first thread
-        if (id == 0):
-            self.startEvent = self.traceDict[0][0].copy()
+        if (id == 1):
+            self.startEvent = self.traceDict[1][0].copy()
             self.lastEvent = self.traceDict[0][-1].copy()
 
         self.threadList.append(id)
@@ -119,6 +120,8 @@ class ParsedTraces:
 
         This merged the arrays by pairs in order to reduce the worst case merge
         conditions where the merge arrays grow too much."""
+        assert self.startEvent  # if this fails there was not thread zero file
+
         traces = list(self.traceDict.values())
 
         merged = []
@@ -134,10 +137,9 @@ class ParsedTraces:
         return merged[0]
 
     def _processEvent(self, input):
+        '''This modifies some events details, these fixes will be '''
         output = input.copy()
-        output['core'] += 1
         output['time'] -= self.startEvent['time']
-        output['tid'] += 1
 
         return output
 
