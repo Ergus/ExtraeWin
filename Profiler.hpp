@@ -148,9 +148,18 @@ namespace profiler {
 				_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
 			}
 
-			_file.write(reinterpret_cast<char *>(_entries.data()), _entries.size() * sizeof(EventEntry));
 			_header._totalFlushed += _entries.size();
-			_file.clear();
+
+			// Go to beginning and write the header
+			_file.seekp(0, std::ios_base::beg);
+			_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
+
+			// Go to end and write the data
+			_file.seekp(0, std::ios_base::end);
+			_file.write(reinterpret_cast<char *>(_entries.data()), _entries.size() * sizeof(EventEntry));
+
+			// clear the buffer.
+			_entries.clear();
 		}
 
 	  public:
@@ -306,7 +315,11 @@ namespace profiler {
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relaton tid->id */
 		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
-	}; // ProfilerGuard::BufferSet
+	}; // BufferSet
+
+	template <size_t T>
+	BufferSet<T> BufferSet<T>::_singleton;
+
 
 
 	/**
@@ -347,7 +360,10 @@ namespace profiler {
 			emplaceEvent(1, 0);
 		}
 
-	}; // ProfilerGuard::InfoThread
+	}; // InfoThread
+
+	template <size_t T>
+	thread_local InfoThread<T> InfoThread<T>::_singletonThread;
 
 
 
@@ -388,15 +404,9 @@ namespace profiler {
 
 	}; // ProfilerGuard
 
-	// static members in ProfilerGuard.
-
-	template <size_t T>
-	BufferSet<T> BufferSet<T>::_singleton;
-
-	template <size_t T>
-	thread_local InfoThread<T> InfoThread<T>::_singletonThread;
-
-	// Outline constructors.
+	// ==================================================
+	// Outline function definitions.
+	// ==================================================
 
 	template <size_t BUFFERSIZE>
 	Buffer<BUFFERSIZE>::Buffer(
@@ -406,9 +416,6 @@ namespace profiler {
 		  _fileName(std::move(fileName)),
 		  _entries()
 	{
-		// Reserve space for the header
-		_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
-
 		// Reseerve memory for the buffer.
 		_entries.reserve(_maxEntries);
 	}
@@ -426,9 +433,7 @@ namespace profiler {
 		}
 
 		flushBuffer(); // Flush all remaining events
-		_file.seekp(0);
-		_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
-		_file.close(); // close the file
+		_file.close(); // close the file only at the end.
 
 		BufferSet<BUFFERSIZE>::_singleton.AddToReport(_fileName);
 	}
