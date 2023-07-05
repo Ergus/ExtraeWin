@@ -20,10 +20,10 @@
 
 void threadFuncion(size_t id)
 {
-	auto guard1 = profiler::ProfilerGuard(100, id + 1);
+	profiler::ProfilerGuard guard(100, id + 1);
 
 	for (size_t i = 0; i < 10; ++i) {
-		auto guard2 = profiler::ProfilerGuard(id, i + 1);
+		profiler::ProfilerGuard guard2(10 + id, i + 1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
@@ -39,6 +39,16 @@ int main()
 
 	for(auto& t: threadVector)
 		t.join();
+
+
+	threadVector.clear();
+	for (size_t i = 0; i < 10; ++i) {
+		threadVector.emplace_back(threadFuncion, i);
+	}
+
+	for(auto& t: threadVector)
+		t.join();
+
 
 	return 0;
 }
