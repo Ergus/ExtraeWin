@@ -78,7 +78,7 @@ namespace profiler {
 		   threadId with every event in order to make a right reconstruction latter.
 		 */
 		struct EventEntry {
-			const int8_t _id;
+			const uint8_t _id;
 			const uint8_t _value;
 			const uint16_t _core;
 			const uint32_t _tid;
@@ -95,7 +95,7 @@ namespace profiler {
 			}
 
 			explicit EventEntry(
-				uint16_t core, uint32_t tid, int8_t id, uint8_t value
+				uint16_t core, uint32_t tid, uint8_t id, uint8_t value
 			) : EventEntry(
 					core,
 					tid,
@@ -159,7 +159,7 @@ namespace profiler {
 			// The -1 event is the global execution event.
 			// We use it to measure the total time and rely on constructors/destructors
 			// of static members (the singleton) to register them.
-			emplace(cpuID, 0, -1, 1, getMicroseconds(std::chrono::system_clock::now()));
+			emplace(cpuID, 0, 0, 1, getMicroseconds(std::chrono::system_clock::now()));
 		}
 
 		Buffer(Buffer&& other)
@@ -256,10 +256,10 @@ namespace profiler {
 
 		};
 
-		const int _id;
-		const size_t _tid;
+		const uint8_t _id;
+		const uint32_t _tid;
 
-		static void registerNewEvent(int id, unsigned int value, unsigned long tid)
+		static void registerNewEvent(uint8_t id, uint8_t value, uint32_t tid)
 		{
 			uint16_t cpu = getCPUId();
 			_singleton[cpu].emplace(cpu, tid, id, value);
@@ -269,7 +269,7 @@ namespace profiler {
 
 		static BufferSet _singleton;
 
-		ProfilerGuard(int id, unsigned int value)
+		ProfilerGuard(uint8_t id, uint8_t value)
 			: _id(id),
 			  _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		{
@@ -304,7 +304,7 @@ namespace profiler {
 		// The -1 event is the global execution event.
 		// We use it to measure the total time and rely on constructors/destructors
 		// of static members (the singleton) to register them.
-		emplace(_header._cpuID, 0, -1, 0, getMicroseconds(std::chrono::system_clock::now()));
+		emplace(_header._cpuID, 0, 0, 0, getMicroseconds(std::chrono::system_clock::now()));
 
 		flushBuffer(); // Flush all remaining events
 		_file.seekp(0);
