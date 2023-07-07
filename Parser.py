@@ -12,11 +12,11 @@ class ParsedTraces:
     '''Class with imported information from trace binary file.'''
     headerType = struct.Struct("I I Q Q")
 
-    eventType = np.dtype([('time', 'u4'),
-                          ('id', 'u1'),
-                          ('value', 'u1'),
-                          ('core', 'u1'),
-                          ('tid', 'u1')])
+    eventType = np.dtype([('time', 'u8'),
+                          ('id', 'u2'),
+                          ('value', 'u2'),
+                          ('core', 'u2'),
+                          ('tid', 'u2')])
 
     def __init__(self):
         self.traceDict = {}
