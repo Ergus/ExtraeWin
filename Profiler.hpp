@@ -110,14 +110,14 @@ namespace profiler {
 		   threadId with every event in order to make a right reconstruction latter.
 		 */
 		struct EventEntry {
-			const uint32_t _time;
-			const uint8_t _id;
-			const uint8_t _value;
-			const uint8_t _core;
-			const uint8_t _thread;
+			const uint64_t _time;
+			const uint16_t _id;
+			const uint16_t _value;
+			const uint16_t _core;
+			const uint16_t _thread;
 
 			explicit EventEntry(
-				uint8_t id, uint8_t value, uint8_t thread
+				uint16_t id, uint16_t value, uint16_t thread
 			) : _time(getMicroseconds(std::chrono::high_resolution_clock::now())),
 				_id(id),
 				_value(value),
@@ -164,7 +164,7 @@ namespace profiler {
 
 	  public:
 
-		Buffer(uint32_t id, uint64_t tid, std::string fileName, uint64_t startGTime);
+		Buffer(uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime);
 
 		Buffer(Buffer&& other)
 			: _header(std::move(other._header)),
@@ -180,7 +180,7 @@ namespace profiler {
 		*/
 		~Buffer();
 
-		void emplace(uint8_t id, uint8_t value)
+		void emplace(uint16_t id, uint16_t value)
 		{
 			_entries.emplace_back(
 				id,
@@ -209,11 +209,10 @@ namespace profiler {
 		/**
 		   Static utility function to build the trace directory
 		*/
-		static std::string getTraceDirectory(
-			std::chrono::time_point<std::chrono::system_clock> systemTimePoint
-		)
+		static std::string getTraceDirectory(uint64_t systemTimePoint)
 		{
-			auto localTime = std::chrono::system_clock::to_time_t(systemTimePoint);
+			const time_t localTime = static_cast<time_t>(systemTimePoint);
+
 			std::stringstream ss;
 			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
 			return ss.str();
@@ -282,7 +281,7 @@ namespace profiler {
 				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
 			it = _eventsMap.try_emplace(
-				it, tid, _tcounter++, tid, filename, getMicroseconds(_startSystemTimePoint)
+				it, tid, _tcounter++, tid, filename, _startSystemTimePoint
 			);
 
 			return it->second;
@@ -305,15 +304,16 @@ namespace profiler {
 			_file << text << std::endl;
 		}
 
+
 	private:
-		const std::chrono::time_point<std::chrono::system_clock> _startSystemTimePoint;
+		const uint64_t _startSystemTimePoint;
 		const std::string _traceDirectory;
 
 		std::mutex _fileMutex;	 /**< mutex needed to write in the global file */
 		std::ofstream _file;     /**< report global file */
 
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relaton tid->id */
+		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
 		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
 	}; // BufferSet
 
@@ -333,7 +333,7 @@ namespace profiler {
 		Buffer<BUFFERSIZE> &_threadBuffer;
 
 	public:
-		static void emplaceEvent(uint8_t id, uint8_t value)
+		static void emplaceEvent(uint16_t id, uint16_t value)
 		{
 			_singletonThread._threadBuffer.emplace(id, value);
 		}
@@ -373,7 +373,7 @@ namespace profiler {
 	template<size_t BUFFERSIZE = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
 
-		const uint8_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
+		const uint16_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
 
 	  public:
 
@@ -390,7 +390,7 @@ namespace profiler {
 		   The constructor emits an event that will be paired with the
 		   equivalent one emitted in the destructor.
 		 */
-		ProfilerGuard(uint8_t id, uint8_t value)
+		ProfilerGuard(uint16_t id, uint16_t value)
 			: _id(id)
 		{
 			assert(value != 0);
@@ -410,7 +410,7 @@ namespace profiler {
 
 	template <size_t BUFFERSIZE>
 	Buffer<BUFFERSIZE>::Buffer(
-		uint32_t id, uint64_t tid, std::string fileName, uint64_t startGTime
+		uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime
 	)
 		: _header(id, tid, startGTime),
 		  _fileName(std::move(fileName)),
