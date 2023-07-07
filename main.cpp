@@ -20,7 +20,7 @@
 
 void threadFuncion(size_t id)
 {
-	static uint16_t _functionID = profiler::registerName("Function", 10);
+	static uint16_t _functionID = profiler::registerName(__func__);
 	profiler::ProfilerGuard guard(_functionID, id + 1);
 
 	for (size_t i = 0; i < 10; ++i) {

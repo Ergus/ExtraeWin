@@ -405,10 +405,12 @@ namespace profiler {
 	template <size_t T>
 	BufferSet<T> BufferSet<T>::_singleton;
 
-
-	inline uint16_t registerName(const std::string &name, uint16_t value)
+	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
 	{
-		return BufferSet<(1 << 20)>::_singleton._eventsNames.registerName(name, value);
+		if (value != 0)
+			return BufferSet<(1 << 20)>::_singleton._eventsNames.registerName(name, value);
+
+		return BufferSet<(1 << 20)>::_singleton._eventsNames.autoRegisterName(name);
 	}
 
 
