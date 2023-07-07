@@ -20,10 +20,13 @@
 
 void threadFuncion(size_t id)
 {
-	profiler::ProfilerGuard guard(100, id + 1);
+	static uint16_t _functionID = profiler::registerName("Function", 10);
+	profiler::ProfilerGuard guard(_functionID, id + 1);
 
 	for (size_t i = 0; i < 10; ++i) {
-		profiler::ProfilerGuard guard2(10 + id, i + 1);
+		static uint16_t _loopID = profiler::registerName("Loop", 11);
+		profiler::ProfilerGuard guard2(_loopID, i + 1);
+
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
