@@ -201,6 +201,70 @@ namespace profiler {
 	}; // Buffer
 
 
+	template <typename T>
+	class NameSet {
+	public:
+		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
+		static constexpr T maxEvent = std::numeric_limits<T>::max();
+
+		T registerName(const std::string &name, T value)
+		{
+			if (value > maxUserEvent)
+			{
+				const std::string message
+					= "Cannot register event: '" + name
+					+ "' with id: " + std::to_string(value)
+					+ " user value limit is: '" + std::to_string(value) + "'";
+				throw std::runtime_error(message);
+			}
+
+			std::lock_guard<std::mutex> lk(_namesMutex);
+			auto it = _namesMap.emplace(value, name);
+			const std::string valueInside = it.first->second;
+
+			if (valueInside != name)
+			{
+				const std::string message
+					= "Cannot register event: '" + name
+					+ "' with id: " + std::to_string(value)
+					+ " the id is already taken by: '" + valueInside + "'";
+				throw std::runtime_error(message);
+			}
+
+			return value;
+		}
+
+		T autoRegisterName(const std::string &name)
+		{
+			std::lock_guard<std::mutex> lk(_namesMutex);
+			auto it =_namesMap.lower_bound(_counter);
+
+			while ((it = _namesMap.emplace_hint(it, ++_counter, name))->second != name) {
+				// If counter goes to zero there is overflow, so, no empty places.
+				if (_counter == maxEvent)
+					throw std::runtime_error("Profiler cannot register event: " + name);
+			}
+
+			return _counter;
+		}
+
+		auto begin() const
+		{
+			return _namesMap.begin();
+		}
+
+		auto end() const
+		{
+			return _namesMap.end();
+		}
+
+	private:
+		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
+		T _counter = maxUserEvent;           /**< counter for automatic function registration */
+		std::map<T, std::string> _namesMap;  /**< map with the events names */
+	};
+
+
 	/**
 	   Class for global singleton.
 	*/
@@ -230,13 +294,25 @@ namespace profiler {
 		   thread creation event.  Which in main thread (id == 1) is the
 		   full execution time.
 		*/
-		BufferSet() :
-			_startSystemTimePoint(std::chrono::system_clock::now()),
-			_traceDirectory(getTraceDirectory(_startSystemTimePoint))
+		BufferSet():
+			_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count()),
+			_traceDirectory(getTraceDirectory(_startSystemTimePoint)),
+			_eventsNames(),
+			threadEventID(_eventsNames.autoRegisterName("ThreadRunning"))
 		{
 			// Create the directory
 			if (!std::filesystem::create_directory(_traceDirectory))
-				throw  std::runtime_error("Cannot create traces directory: " + _traceDirectory);
+				throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
+		}
+
+		~BufferSet()
+		{
+			std::string ret;
+
+			for (auto it : _eventsNames)
+				ret += std::to_string(it.first) + " " + it.second + "\n";
+
+			this->AddToReport(ret);
 		}
 
 		/**
@@ -315,11 +391,25 @@ namespace profiler {
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
 		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
+
+		// Events names register
+		NameSet<uint16_t> _eventsNames;
+
+		friend uint16_t registerName(const std::string &name, uint16_t value);
+
+	public:
+		const uint16_t threadEventID;
+
 	}; // BufferSet
 
 	template <size_t T>
 	BufferSet<T> BufferSet<T>::_singleton;
 
+
+	inline uint16_t registerName(const std::string &name, uint16_t value)
+	{
+		return BufferSet<(1 << 20)>::_singleton._eventsNames.registerName(name, value);
+	}
 
 
 	/**
@@ -352,12 +442,14 @@ namespace profiler {
 			  _threadBuffer(BufferSet<BUFFERSIZE>::_singleton.getEventsMap(_tid))
 		{
 			assert(_tid == _threadBuffer.getHeader()._tid);
-			emplaceEvent(1, _threadBuffer.getHeader()._id);
+
+			emplaceEvent(BufferSet<BUFFERSIZE>::_singleton.threadEventID,
+			             _threadBuffer.getHeader()._id);
 		}
 
 		~InfoThread()
 		{
-			emplaceEvent(1, 0);
+			emplaceEvent(BufferSet<BUFFERSIZE>::_singleton.threadEventID, 0);
 		}
 
 	}; // InfoThread
