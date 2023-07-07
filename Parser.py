@@ -3,6 +3,8 @@ import numpy as np
 import os
 import sys
 import datetime as dt
+from typing import Final, Dict, List, Any
+import numpy.typing as npt
 
 # lEntry="i I L L"
 # entry = struct.Struct(lEntry)
@@ -18,16 +20,16 @@ class ParsedTraces:
                           ('core', 'u2'),
                           ('tid', 'u2')])
 
-    def __init__(self):
-        self.traceDict = {}
-        self.startGlobalTime = 0
+    def __init__(self) -> None:
+        self.traceDict: Dict[int, np.ndarray] = {}
+        self.startGlobalTime: int = 0
         self.startEvent = None
         self.lastEvent = None
-        self.nevents = 0
-        self.threadList = []
-        self.coresList = []
+        self.nevents: int = 0
+        self.threadList: List[int] = []
+        self.coresList: List[int] = []
 
-    def addTraceFile(self, trace_file_name):
+    def addTraceFile(self, trace_file_name: str) -> None:
         '''Parse a trace file and load it into memory.'''
         headerSize: int = ParsedTraces.headerType.size
 
@@ -37,12 +39,11 @@ class ParsedTraces:
                 = ParsedTraces.headerType.unpack(traceFile.read(headerSize))
 
         # Now import the rest of the trace in a numpy array
-        self.traceDict[id] \
-            = np.fromfile(trace_file_name,
-                          ParsedTraces.eventType,
-                          nevents,
-                          "",
-                          headerSize)
+        self.traceDict[id] = np.fromfile(trace_file_name,
+                                         ParsedTraces.eventType,
+                                         nevents,
+                                         "",
+                                         headerSize)
 
         # Now check the boundaries on the first thread
         if (id == 1):
@@ -53,41 +54,43 @@ class ParsedTraces:
         self.threadList.append(id)
 
         # get the indices of the first unique cores
-        indices \
+        indices: np.ndarray \
             = np.unique(self.traceDict[id][:]['core'], return_index=True)[1]
 
-        cores = self.traceDict[id][sorted(indices)]['core']
+        cores: np.ndarray = self.traceDict[id][sorted(indices)]['core']
 
         self.coresList += [i for i in cores if i not in self.coresList]
 
-    def _getHeaderLine(self):
+    def _getHeaderLine(self) -> str:
         '''Get the Paraver formatted Header'''
         # Paraver (dd/mm/yy at hh:mm):time:nNodes(nCpus1,...,nCpusN):nApps:app1[...]
         assert self.startGlobalTime != 0, "No main thread (id == 1) info set"
 
-        elapsed = self.lastEvent['time'] - self.startEvent['time']
+        elapsed: Final[int] = self.lastEvent['time'] - self.startEvent['time']
 
-        start = self.startGlobalTime/1000000
-        date = dt.datetime.fromtimestamp(start).strftime('%d/%m/%Y at %H:%M')
+        start: Final[int] = self.startGlobalTime
+        date: str = dt.datetime.fromtimestamp(start).strftime('%d/%m/%Y at %H:%M')
 
-        cores = len(self.coresList)
+        cores: Final[int] = len(self.coresList)
 
-        threads = len(self.threadList)
+        threads: Final[int] = len(self.threadList)
 
         return f"#Paraver ({date}):{elapsed}:1({cores}):1:1({threads}:1)"
 
     @staticmethod
-    def __mergeTwo(a, b):
+    def __mergeTwo(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         """Merge two trace containers respecting the order
 
         This is usually the last step in a merge sort code, I am
         actually surprised that numpy does not provide such feature.
         """
-        merged = np.zeros(len(a) + len(b), dtype=ParsedTraces.eventType)
+        merged: np.ndarray = np.zeros(len(a) + len(b), dtype=ParsedTraces.eventType)
 
-        it = ita = itb = 0
-        lena = len(a)
-        lenb = len(b)
+        it: int = 0
+        ita: int = 0
+        itb: int = 0
+        lena: Final[int] = len(a)
+        lenb: Final[int] = len(b)
 
         while ita < lena and itb < lenb:
             if a[ita]['time'] < b[itb]["time"]:
@@ -108,7 +111,7 @@ class ParsedTraces:
 
         return merged
 
-    def _merge(self):
+    def _merge(self) -> np.ndarray:
         """Create a contiguous list with all the events merged
 
         This merged the arrays by pairs in order to reduce the worst case merge
@@ -116,9 +119,9 @@ class ParsedTraces:
         """
         assert self.startEvent  # if this fails there was not thread zero file
 
-        traces = list(self.traceDict.values())
+        traces: List[np.ndarray] = list(self.traceDict.values())
 
-        merged = []
+        merged: List[np.ndarray] = []
         while len(traces) > 1:
             merged = []
             for i in range(0, len(traces), 2):
@@ -130,10 +133,12 @@ class ParsedTraces:
 
         return merged[0]
 
-    def _eventToStr(self, event):
+    def _eventToStr(self, event) -> str:
         '''Print an event'''
-        # type:cpu:app:task:thread:time:event:value
-        return f"2:{event['core']}:1:1:{event['tid']}:{event['time'] - self.startEvent['time']}:{event['id']}:{event['value']}"
+        ttime: Final[int] = event['time'] - self.startEvent['time']
+
+        ## type:cpu:app:task:thread:time:event:value
+        return f"2:{event['core']}:1:1:{event['tid']}:{ttime}:{event['id']}:{event['value']}"
 
     def __str__(self):
         '''Get the full trace'''
