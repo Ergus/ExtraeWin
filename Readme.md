@@ -39,6 +39,6 @@ Instrumenting code
 At the moment the events are stored in `uint16_t` types, so the events
 must be in the range: 1-65535.
 
--             0 Don't use it!!
--     1 - 32768 User events manually defined.
+- 0 Don't use it!!
+- 1 - 32768 User events manually defined.
 - 32769 - 65536 Are reserved for auto-registered functions and internal 
