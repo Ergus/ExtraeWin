@@ -38,6 +38,18 @@ namespace profiler {
 		return procNumber.Group * 64 + procNumber.Number + 1;
 	}
 
+	std::string getHostName()
+	{
+		TCHAR  infoBuf[32767];
+		DWORD  bufCharCount = 32767;
+
+		// Get and display the name of the computer.
+		if (!GetComputerName( infoBuf, &bufCharCount ) )
+			printError( TEXT("GetComputerName") ); 
+
+		return infoBuf;
+	}
+
 #else
 
 	#include <unistd.h>
@@ -54,6 +66,17 @@ namespace profiler {
 		const int cpu = sched_getcpu();
 		assert(cpu >= 0);
 		return cpu + 1;
+	}
+
+	std::string getHostName()
+	{
+		constexpr size_t  len = 128;
+		char  infoBuf[len];
+
+		if (gethostname(infoBuf, len) != 0)
+			perror("Error getting hostname");
+
+		return infoBuf;
 	}
 
 #endif
@@ -293,7 +316,7 @@ namespace profiler {
 
 	public:
 
-		static BufferSet<BUFFERSIZE> _singleton;                     /**< This is the global singleton for all the profiler */
+		static BufferSet<BUFFERSIZE> _singleton; /**< This is the global singleton for all the profiler */
 
 		/**
 		   Buffer set constructor.
@@ -339,6 +362,7 @@ namespace profiler {
 			if (it != _eventsMap.end() && it->first == tid)
 				return it->second;
 
+			// === else === create new entry: <tid, id>
 			// Else, this is the first time we use this tid, so, we need
 			// exclusive access to modify the map. So, let's release the
 			// read lock and try to take the write (unique) lock.
@@ -458,7 +482,6 @@ namespace profiler {
 	thread_local InfoThread<T> InfoThread<T>::_singletonThread;
 
 
-
 	/**
 	   Guard class (more info in the constructor docstring)
 	 */
@@ -560,6 +583,37 @@ namespace profiler {
 			ret += std::to_string(it.first) + " " + it.second + "\n";
 
 		this->AddToReport(ret);
+
+		std::string hostname = getHostName();
+		int ncores = getNumberOfCores();
+		size_t nthreads = _tcounter - 1;
+
+		// ROW File
+		std::ofstream rowfile(_traceDirectory + "/Trace.row", std::ios::out);
+
+		rowfile << "LEVEL CPU SIZE " << ncores << std::endl;
+		for (int i = 1; i <= ncores; ++i)
+			rowfile << i << "." << hostname << std::endl;
+
+		rowfile << "\nLEVEL NODE SIZE 1" << std::endl;
+		rowfile << hostname << std::endl;
+
+		rowfile << "\nLEVEL THREAD SIZE " << nthreads << std::endl;
+		for (size_t i = 1; i <= nthreads; ++i)
+			rowfile << "THREAD 1.1." << i << std::endl;
+
+		rowfile.close();
+
+		// PCF File
+		std::ofstream pcffile(_traceDirectory + "/Trace.pcf", std::ios::out);
+		for (auto it : _eventsNames)
+		{
+			pcffile << "EVENT TYPE" << std::endl;
+			pcffile << "0 " << std::to_string(it.first) << " " << it.second << std::endl;
+			pcffile << std::endl;
+		}
+		pcffile.close();
+
 	}
 
 }
