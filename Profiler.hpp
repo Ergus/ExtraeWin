@@ -61,10 +61,13 @@ namespace profiler {
 	/**
 	   Get microseconds since epoch for a given timePoint
 	*/
-	template<typename clocktype>
-	inline unsigned long getMicroseconds(const std::chrono::time_point<clocktype> &timePoint)
+	inline unsigned long getNanoseconds()
 	{
-		return std::chrono::time_point_cast<std::chrono::microseconds>(timePoint).time_since_epoch().count();
+		static const std::chrono::high_resolution_clock::time_point begin
+			= std::chrono::high_resolution_clock::now();
+
+		return std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::high_resolution_clock::now() - begin).count();
 	}
 
 	// ==================================================
@@ -122,7 +125,7 @@ namespace profiler {
 
 			explicit EventEntry(
 				uint16_t id, uint16_t value, uint16_t thread
-			) : _time(getMicroseconds(std::chrono::high_resolution_clock::now())),
+			) : _time(getNanoseconds()),
 				_id(id),
 				_value(value),
 				_core(getCPUId()),
@@ -535,12 +538,10 @@ namespace profiler {
 	{
 		// Make just a trivial check to force the first access to the
 		// _singletonThread construct it at the very beginning.
-		//This is because the thread-local variables are constructed on demand,
-		// but the static are built before main  (eagerly)
-		
-		uint32_t thread_id	= InfoThread<BUFFERSIZE>::getBuffer().getHeader()._id;
-
-		if (thread_id != 1)
+		// This is because the thread-local variables are constructed on demand,
+		// but the static are built before main  (eagerly) So we need to do this
+		// to compute the real execution time.
+		if (InfoThread<BUFFERSIZE>::getBuffer().getHeader()._id != 1)
 			throw std::runtime_error("Master is not running in the first thread");
 
 		// Create the directory

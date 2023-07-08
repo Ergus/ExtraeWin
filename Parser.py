@@ -75,7 +75,7 @@ class ParsedTraces:
 
         threads: Final[int] = len(self.threadList)
 
-        return f"#Paraver ({date}):{elapsed}:1({cores}):1:1({threads}:1)"
+        return f"#Paraver ({date}):{elapsed}_ns:1({cores}):1:1({threads}:1)"
 
     @staticmethod
     def __mergeTwo(a: np.ndarray, b: np.ndarray) -> np.ndarray:
