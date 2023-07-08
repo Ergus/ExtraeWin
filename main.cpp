@@ -34,6 +34,8 @@ void threadFuncion(size_t id)
 
 int main()
 {
+	std::cout << "Enter Main" << std::endl;
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	std::vector<std::thread> threadVector;
 
 	for (size_t i = 0; i < 10; ++i) {
@@ -43,6 +45,7 @@ int main()
 	for(auto& t: threadVector)
 		t.join();
 
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 	threadVector.clear();
 	for (size_t i = 0; i < 10; ++i) {

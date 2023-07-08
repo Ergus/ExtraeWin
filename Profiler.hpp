@@ -67,6 +67,10 @@ namespace profiler {
 		return std::chrono::time_point_cast<std::chrono::microseconds>(timePoint).time_since_epoch().count();
 	}
 
+	// ==================================================
+	// End of the basic functions
+	// ==================================================
+
 	/**
 	   Buffer class to store the events.
 
@@ -294,26 +298,10 @@ namespace profiler {
 		   thread creation event.  Which in main thread (id == 1) is the
 		   full execution time.
 		*/
-		BufferSet():
-			_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count()),
-			_traceDirectory(getTraceDirectory(_startSystemTimePoint)),
-			_eventsNames(),
-			threadEventID(_eventsNames.autoRegisterName("ThreadRunning"))
-		{
-			// Create the directory
-			if (!std::filesystem::create_directory(_traceDirectory))
-				throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
-		}
+		BufferSet();
 
-		~BufferSet()
-		{
-			std::string ret;
+		~BufferSet();
 
-			for (auto it : _eventsNames)
-				ret += std::to_string(it.first) + " " + it.second + "\n";
-
-			this->AddToReport(ret);
-		}
 
 		/**
 		   Get the Buffer_t associated with a thread id hash
@@ -425,9 +413,14 @@ namespace profiler {
 		Buffer<BUFFERSIZE> &_threadBuffer;
 
 	public:
+		static Buffer<BUFFERSIZE> &getBuffer()
+		{
+			return _singletonThread._threadBuffer;
+		}
+
 		static void emplaceEvent(uint16_t id, uint16_t value)
 		{
-			_singletonThread._threadBuffer.emplace(id, value);
+			getBuffer().emplace(id, value);
 		}
 
 		/**
@@ -531,4 +524,39 @@ namespace profiler {
 
 		BufferSet<BUFFERSIZE>::_singleton.AddToReport(_fileName);
 	}
+
+
+	template <size_t BUFFERSIZE>
+	BufferSet<BUFFERSIZE>::BufferSet():
+		_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count()),
+		_traceDirectory(getTraceDirectory(_startSystemTimePoint)),
+		_eventsNames(),
+		threadEventID(_eventsNames.autoRegisterName("ThreadRunning"))
+	{
+		// Make just a trivial check to force the first access to the
+		// _singletonThread construct it at the very beginning.
+		//This is because the thread-local variables are constructed on demand,
+		// but the static are built before main  (eagerly)
+		
+		uint32_t thread_id	= InfoThread<BUFFERSIZE>::getBuffer().getHeader()._id;
+
+		if (thread_id != 1)
+			throw std::runtime_error("Master is not running in the first thread");
+
+		// Create the directory
+		if (!std::filesystem::create_directory(_traceDirectory))
+			throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
+	}
+
+	template <size_t BUFFERSIZE>
+	BufferSet<BUFFERSIZE>::~BufferSet()
+	{
+		std::string ret;
+
+		for (auto it : _eventsNames)
+			ret += std::to_string(it.first) + " " + it.second + "\n";
+
+		this->AddToReport(ret);
+	}
+
 }
