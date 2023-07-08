@@ -63,6 +63,8 @@ namespace profiler {
 	*/
 	inline unsigned long getNanoseconds()
 	{
+		// Store the very first time we enter this function and then return the
+		// number of nanoseconds AFTER this first call.
 		static const std::chrono::high_resolution_clock::time_point begin
 			= std::chrono::high_resolution_clock::now();
 
@@ -101,7 +103,7 @@ namespace profiler {
 			}
 
 			TraceHeader(uint32_t id, uint64_t tid, uint64_t startGTime)
-				: _id(id), _tid(tid), _totalFlushed(0), _startGTime(startGTime)
+				: _id(id), _totalFlushed(0), _tid(tid), _startGTime(startGTime)
 			{}
 
 		} _header;
