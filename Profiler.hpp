@@ -294,7 +294,7 @@ namespace profiler {
 		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
 		T _counter = maxUserEvent;           /**< counter for automatic function registration */
 		std::map<T, std::string> _namesMap;  /**< map with the events names */
-	};
+	}; // NameSet
 
 
 	/**
@@ -316,7 +316,8 @@ namespace profiler {
 
 	public:
 
-		static BufferSet<BUFFERSIZE> _singleton; /**< This is the global singleton for all the profiler */
+		/**< This is the global singleton for all the profiler */
+		static BufferSet<BUFFERSIZE> _singleton;
 
 		/**
 		   Buffer set constructor.
@@ -351,7 +352,7 @@ namespace profiler {
 		   the new entry in the map, construct the Buffer and assign an
 		   ordinal id for it.  Any optimization here will be very welcome.
 		*/
-		Buffer<BUFFERSIZE> &getEventsMap(size_t tid)
+		std::shared_ptr<Buffer<BUFFERSIZE>> &getEventsMap(size_t tid)
 		{
 			// We attempt to tale the read lock first. If this tid was
 			// already used, the buffer must be already created, and we
@@ -374,7 +375,7 @@ namespace profiler {
 				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
 			it = _eventsMap.try_emplace(
-				it, tid, _tcounter++, tid, filename, _startSystemTimePoint
+				it, tid, new Buffer<BUFFERSIZE>(_tcounter++, tid, filename, _startSystemTimePoint)
 			);
 
 			return it->second;
@@ -406,7 +407,7 @@ namespace profiler {
 		std::ofstream _file;     /**< report global file */
 
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
+		std::map<size_t, std::shared_ptr<Buffer<BUFFERSIZE>>> _eventsMap; /**< This map contains the relation tid->id */
 		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
 
 		// Events names register
@@ -422,6 +423,9 @@ namespace profiler {
 	template <size_t T>
 	BufferSet<T> BufferSet<T>::_singleton;
 
+	/**
+	   Public function to create new events.
+	 */
 	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
 	{
 		if (value != 0)
@@ -439,17 +443,12 @@ namespace profiler {
 		thread_local static InfoThread<BUFFERSIZE> _singletonThread; /**< Thread local singleton */
 
 		const size_t _tid;
-		Buffer<BUFFERSIZE> &_threadBuffer;
+		std::shared_ptr<Buffer<BUFFERSIZE>> _threadBuffer;
 
 	public:
-		static Buffer<BUFFERSIZE> &getBuffer()
+		static std::shared_ptr<Buffer<BUFFERSIZE>> &getThreadBuffer()
 		{
 			return _singletonThread._threadBuffer;
-		}
-
-		static void emplaceEvent(uint16_t id, uint16_t value)
-		{
-			getBuffer().emplace(id, value);
 		}
 
 		/**
@@ -465,15 +464,15 @@ namespace profiler {
 			: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
 			  _threadBuffer(BufferSet<BUFFERSIZE>::_singleton.getEventsMap(_tid))
 		{
-			assert(_tid == _threadBuffer.getHeader()._tid);
+			assert(_tid == _threadBuffer->getHeader()._tid);
 
-			emplaceEvent(BufferSet<BUFFERSIZE>::_singleton.threadEventID,
-			             _threadBuffer.getHeader()._id);
+			getThreadBuffer()->emplace(BufferSet<BUFFERSIZE>::_singleton.threadEventID,
+			                           _threadBuffer->getHeader()._id);
 		}
 
 		~InfoThread()
 		{
-			emplaceEvent(BufferSet<BUFFERSIZE>::_singleton.threadEventID, 0);
+			getThreadBuffer()->emplace(BufferSet<BUFFERSIZE>::_singleton.threadEventID, 0);
 		}
 
 	}; // InfoThread
@@ -509,12 +508,12 @@ namespace profiler {
 			: _id(id)
 		{
 			assert(value != 0);
-			InfoThread<BUFFERSIZE>::emplaceEvent(_id, value);
+			InfoThread<BUFFERSIZE>::getThreadBuffer()->emplace(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			InfoThread<BUFFERSIZE>::emplaceEvent(_id, 0);
+			InfoThread<BUFFERSIZE>::getThreadBuffer()->emplace(_id, 0);
 		}
 
 	}; // ProfilerGuard
@@ -566,7 +565,7 @@ namespace profiler {
 		// This is because the thread-local variables are constructed on demand,
 		// but the static are built before main  (eagerly) So we need to do this
 		// to compute the real execution time.
-		if (InfoThread<BUFFERSIZE>::getBuffer().getHeader()._id != 1)
+		if (InfoThread<BUFFERSIZE>::getThreadBuffer()->getHeader()._id != 1)
 			throw std::runtime_error("Master is not running in the first thread");
 
 		// Create the directory
