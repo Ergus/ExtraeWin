@@ -87,7 +87,7 @@ namespace profiler {
 	/**
 	   Get microseconds since epoch for a given timePoint
 	*/
-	inline uint16_t getNanoseconds()
+	inline uint64_t getNanoseconds()
 	{
 		// Store the very first time we enter this function and then return the
 		// number of nanoseconds AFTER this first call.
@@ -467,8 +467,6 @@ namespace profiler {
 		Global()
 			: _singleton(new BufferSet<I>())
 		{
-			std::cout << "Init Global" << std::endl;
-
 			// Make just a trivial check to force the first access to the
 			// _singletonThread construct it at the very beginning.
 			// This is because the thread-local variables are constructed on demand,
@@ -578,8 +576,6 @@ namespace profiler {
 		eventsNames(),
 		threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
 	{
-		std::cout << "BufferSet" << std::endl;
-
 		// Create the directory
 		if (!std::filesystem::create_directory(_traceDirectory))
 			throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
@@ -632,7 +628,6 @@ namespace profiler {
 		  globalBufferSet(Global<I>::globalInfo._singleton),
 		  buffer(globalBufferSet->getThreadBuffer(_tid))
 		{
-			std::cout << "Thread Info" << std::endl;
 			assert(_tid == buffer.getHeader()._tid);
 			buffer.emplace(globalBufferSet->threadEventID, buffer.getHeader()._id);
 		}
