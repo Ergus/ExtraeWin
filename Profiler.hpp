@@ -319,9 +319,6 @@ namespace profiler {
 
 	public:
 
-		/**< This is the global singleton for all the profiler */
-		static BufferSet<BUFFERSIZE> _singleton;
-
 		/**
 		   Buffer set constructor.
 
@@ -355,7 +352,7 @@ namespace profiler {
 		   the new entry in the map, construct the Buffer and assign an
 		   ordinal id for it.  Any optimization here will be very welcome.
 		*/
-		std::shared_ptr<Buffer<BUFFERSIZE>> &getEventsMap(size_t tid)
+		Buffer<BUFFERSIZE> &getThreadBuffer(size_t tid)
 		{
 			// We attempt to tale the read lock first. If this tid was
 			// already used, the buffer must be already created, and we
@@ -377,9 +374,7 @@ namespace profiler {
 			std::string filename
 				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
-			it = _eventsMap.try_emplace(
-				it, tid, new Buffer<BUFFERSIZE>(_tcounter++, tid, filename, _startSystemTimePoint)
-			);
+			it = _eventsMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
 
 			return it->second;
 		}
@@ -410,49 +405,31 @@ namespace profiler {
 		std::ofstream _file;     /**< report global file */
 
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
-		std::map<size_t, std::shared_ptr<Buffer<BUFFERSIZE>>> _eventsMap; /**< This map contains the relation tid->id */
+		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
 		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
-
-		// Events names register
-		NameSet<uint16_t> _eventsNames;
 
 		friend uint16_t registerName(const std::string &name, uint16_t value);
 
 	public:
+		// Events names register
+		NameSet<uint16_t> eventsNames;
+
 		const uint16_t threadEventID;
 
 	}; // BufferSet
-
-	template <size_t T>
-	BufferSet<T> BufferSet<T>::_singleton;
-
-	/**
-	   Public function to create new events.
-	 */
-	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
-	{
-		if (value != 0)
-			return BufferSet<(1 << 20)>::_singleton._eventsNames.registerName(name, value);
-
-		return BufferSet<(1 << 20)>::_singleton._eventsNames.autoRegisterName(name);
-	}
 
 
 	/**
 	   Class for thread local singleton.
 	*/
-	template<size_t BUFFERSIZE>	 //< Maximum size for the buffers ~ 1Mb >/
+	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class InfoThread {
-		thread_local static InfoThread<BUFFERSIZE> _singletonThread; /**< Thread local singleton */
-
 		const size_t _tid;
-		std::shared_ptr<Buffer<BUFFERSIZE>> _threadBuffer;
 
 	public:
-		static std::shared_ptr<Buffer<BUFFERSIZE>> &getThreadBuffer()
-		{
-			return _singletonThread._threadBuffer;
-		}
+
+		std::shared_ptr<BufferSet<I>> globalBufferSet;
+		Buffer<I> &buffer;
 
 		/**
 		   Thread local Info initialization.
@@ -463,31 +440,70 @@ namespace profiler {
 		   the future.  This emits an event of type 2 and value tid (which
 		   is always bigger than zero).
 		*/
-		InfoThread()
-			: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
-			  _threadBuffer(BufferSet<BUFFERSIZE>::_singleton.getEventsMap(_tid))
-		{
-			assert(_tid == _threadBuffer->getHeader()._tid);
-
-			getThreadBuffer()->emplace(BufferSet<BUFFERSIZE>::_singleton.threadEventID,
-			                           _threadBuffer->getHeader()._id);
-		}
+		InfoThread();
 
 		~InfoThread()
 		{
-			getThreadBuffer()->emplace(BufferSet<BUFFERSIZE>::_singleton.threadEventID, 0);
+			buffer.emplace(globalBufferSet->threadEventID, 0);
 		}
-
 	}; // InfoThread
 
-	template <size_t T>
-	thread_local InfoThread<T> InfoThread<T>::_singletonThread;
+	/**
+	   Info container with global variables.
+	 */
+	template <size_t I>
+	class Global {
+
+	public:
+
+		static InfoThread<I> getThreadInfo()
+		{
+			thread_local static InfoThread<I> threadInfo;
+			return threadInfo;
+		}
+
+		std::shared_ptr<BufferSet<I>> _singleton;
+
+		Global()
+			: _singleton(new BufferSet<I>())
+		{
+			std::cout << "Init Global" << std::endl;
+
+			// Make just a trivial check to force the first access to the
+			// _singletonThread construct it at the very beginning.
+			// This is because the thread-local variables are constructed on demand,
+			// but the static are built before main  (eagerly) So we need to do this
+			// to compute the real execution time.
+			if (getThreadInfo().buffer.getHeader()._id != 1)
+				throw std::runtime_error("Master is not running in the first thread");
+
+		}
+
+		static Global globalInfo;
+
+	};
+
+	template <size_t I>
+	Global<I> Global<I>::globalInfo;
+
+	/**
+	   Public function to create new events.
+	 */
+	template <size_t I=(1 << 20)>
+	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
+	{
+
+		if (value != 0)
+			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerName(name, value);
+
+		return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name);
+	}
 
 
 	/**
 	   Guard class (more info in the constructor docstring)
 	 */
-	template<size_t BUFFERSIZE = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
+	template<size_t I = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
 
 		const uint16_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
@@ -511,12 +527,12 @@ namespace profiler {
 			: _id(id)
 		{
 			assert(value != 0);
-			InfoThread<BUFFERSIZE>::getThreadBuffer()->emplace(_id, value);
+			Global<I>::getThreadInfo().buffer.emplace(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			InfoThread<BUFFERSIZE>::getThreadBuffer()->emplace(_id, 0);
+			Global<I>::getThreadInfo().buffer.emplace(_id, 0);
 		}
 
 	}; // ProfilerGuard
@@ -552,24 +568,17 @@ namespace profiler {
 		flushBuffer(); // Flush all remaining events
 		_file.close(); // close the file only at the end.
 
-		BufferSet<BUFFERSIZE>::_singleton.AddToReport(_fileName);
+		//BufferSet<BUFFERSIZE>::_singleton.AddToReport(_fileName);
 	}
 
-
-	template <size_t BUFFERSIZE>
-	BufferSet<BUFFERSIZE>::BufferSet():
+	template <size_t I>
+	BufferSet<I>::BufferSet():
 		_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count()),
 		_traceDirectory(getTraceDirectory(_startSystemTimePoint)),
-		_eventsNames(),
-		threadEventID(_eventsNames.autoRegisterName("ThreadRunning"))
+		eventsNames(),
+		threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
 	{
-		// Make just a trivial check to force the first access to the
-		// _singletonThread construct it at the very beginning.
-		// This is because the thread-local variables are constructed on demand,
-		// but the static are built before main  (eagerly) So we need to do this
-		// to compute the real execution time.
-		if (InfoThread<BUFFERSIZE>::getThreadBuffer()->getHeader()._id != 1)
-			throw std::runtime_error("Master is not running in the first thread");
+		std::cout << "BufferSet" << std::endl;
 
 		// Create the directory
 		if (!std::filesystem::create_directory(_traceDirectory))
@@ -581,8 +590,6 @@ namespace profiler {
 	{
 		std::string ret;
 
-		for (auto it : _eventsNames)
-			ret += std::to_string(it.first) + " " + it.second + "\n";
 
 		this->AddToReport(ret);
 
@@ -608,7 +615,7 @@ namespace profiler {
 
 		// PCF File
 		std::ofstream pcffile(_traceDirectory + "/Trace.pcf", std::ios::out);
-		for (auto it : _eventsNames)
+		for (auto it : eventsNames)
 		{
 			pcffile << "EVENT TYPE" << std::endl;
 			pcffile << "0 " << std::to_string(it.first) << " " << it.second << std::endl;
@@ -617,5 +624,18 @@ namespace profiler {
 		pcffile.close();
 
 	}
+
+
+	template <size_t I>
+	InfoThread<I>::InfoThread()
+		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
+		  globalBufferSet(Global<I>::globalInfo._singleton),
+		  buffer(globalBufferSet->getThreadBuffer(_tid))
+		{
+			std::cout << "Thread Info" << std::endl;
+			assert(_tid == buffer.getHeader()._tid);
+			buffer.emplace(globalBufferSet->threadEventID, buffer.getHeader()._id);
+		}
+
 
 }
