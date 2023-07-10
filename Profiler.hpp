@@ -117,17 +117,6 @@ namespace profiler {
 			uint64_t _tid;
 			uint64_t _startGTime;    /**< Start global time >*/
 
-			TraceHeader(TraceHeader&& other)
-				: _id(other._id),
-				  _tid(other._tid),
-				  _totalFlushed(other._totalFlushed),
-				  _startGTime(other._startGlobalTime)
-			{
-				other._id = std::numeric_limits<unsigned int>::max();
-				other._tid = std::numeric_limits<unsigned int>::max();
-				other._totalFlushed = 0;
-			}
-
 			TraceHeader(uint32_t id, uint64_t tid, uint64_t startGTime)
 				: _id(id), _totalFlushed(0), _tid(tid), _startGTime(startGTime)
 			{}
@@ -201,15 +190,6 @@ namespace profiler {
 
 		Buffer(uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime);
 
-		Buffer(Buffer&& other)
-			: _header(std::move(other._header)),
-			  _fileName(std::move(other._fileName)),
-			  _file(std::move(other._file)),
-			  _entries(std::move(other._entries))
-		{
-		}
-
-
 		/**
 		   Destructor for the buffer type.
 		*/
@@ -235,7 +215,13 @@ namespace profiler {
 		}
 	}; // Buffer
 
+	/**
+	   Name set thread save map container.
 
+	   This is a thread safe container to register the relation between event
+	   name and id. This container is intend to be accessed only once/event to
+	   register the name of the event.
+	 */
 	template <typename T>
 	class NameSet {
 	public:
@@ -301,7 +287,19 @@ namespace profiler {
 
 
 	/**
-	   Class for global singleton.
+	   BufferSet container
+
+	   This is container stores the buffer for every thread. in a map <tid,
+	   Buffer> This is intended to remember the tid to reuse the Buffer because
+	   the tid is usually recycled after a thread is deleted.
+	   This class is allocated inside a shared_ptr to enforce that it will be
+	   deleted only after the destruction of all the threads.
+	   The Global container holds a reference to it; but every ThreadInfo will
+	   also keep one reference.
+
+	   This is because it seems like on GNU/Linux the global variables are
+	   destructed after the main thread; but in MSWindows the Global variables
+	   seems to be removed before the main thread completes.
 	*/
 	template<size_t BUFFERSIZE>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
@@ -319,14 +317,6 @@ namespace profiler {
 
 	public:
 
-		/**
-		   Buffer set constructor.
-
-		   This is used to construct a singleton stored in a global
-		   variable.  The constructor and destructor automatically emit the
-		   thread creation event.  Which in main thread (id == 1) is the
-		   full execution time.
-		*/
 		BufferSet();
 
 		~BufferSet();
@@ -379,30 +369,10 @@ namespace profiler {
 			return it->second;
 		}
 
-		/**
-		   Add a line to the report text file.
-
-		   Use this functions with caution due to it takes a lock cause the
-		   file is shared.
-		*/
-		void AddToReport(const std::string& text)
-		{
-			std::lock_guard<std::mutex> guard(_fileMutex);
-			if (!_file.is_open()) {
-				_file.open(_traceDirectory + "/Trace.txt", std::ios::out);
-				assert(_file.is_open());
-			}
-
-			_file << text << std::endl;
-		}
-
 
 	private:
 		const uint64_t _startSystemTimePoint;
 		const std::string _traceDirectory;
-
-		std::mutex _fileMutex;	 /**< mutex needed to write in the global file */
-		std::ofstream _file;     /**< report global file */
 
 		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
@@ -421,6 +391,13 @@ namespace profiler {
 
 	/**
 	   Class for thread local singleton.
+
+	   This class will be allocated in a copy/thead in order to perform the
+	   events emission completely thread free.
+	   The constructor of this object takes place the first time an event is
+	   emitted from some thread; so it is not very accurate to use it to measure
+	   total thread duration. However, it is the best we have until we can
+	   enforce some thread hooks.
 	*/
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class InfoThread {
@@ -450,6 +427,10 @@ namespace profiler {
 
 	/**
 	   Info container with global variables.
+
+	   This gives access to the thread and global static variables. And only
+	   holds one pointer to the BufferSet object to avoid its premature
+	   deletion.
 	 */
 	template <size_t I>
 	class Global {
@@ -486,6 +467,8 @@ namespace profiler {
 
 	/**
 	   Public function to create new events.
+
+	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	 */
 	template <size_t I=(1 << 20)>
 	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
@@ -500,6 +483,12 @@ namespace profiler {
 
 	/**
 	   Guard class (more info in the constructor docstring)
+
+	   This is a tricky variable to rely event pairs emission (start-end)
+	   with RAII. This simplifies instrumentation on the user side and may
+	   rely on the instrumentation macro.
+	   The constructor emits an event that will be paired with the
+	   equivalent one emitted in the destructor.
 	 */
 	template<size_t I = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
@@ -514,12 +503,6 @@ namespace profiler {
 
 		/**
 		   Guard constructor.
-
-		   This is a tricky variable to rely event pairs emission (start-end)
-		   with RAII. This simplifies instrumentation on the user side and may
-		   rely on the instrumentation macro.
-		   The constructor emits an event that will be paired with the
-		   equivalent one emitted in the destructor.
 		 */
 		ProfilerGuard(uint16_t id, uint16_t value)
 			: _id(id)
@@ -547,27 +530,19 @@ namespace profiler {
 		  _fileName(std::move(fileName)),
 		  _entries()
 	{
-		// Reseerve memory for the buffer.
+		// Reserve memory for the buffer.
 		_entries.reserve(_maxEntries);
 	}
 
-	// This is declared outside the class because it calls members of ProfilerGuard singleton.
+
 	template <size_t BUFFERSIZE>
 	Buffer<BUFFERSIZE>::~Buffer()
 	{
-		// Early exit without writing anything if this buffer was moved somewhere else.
-		if (_fileName.empty())
-		{
-			assert(_header._totalFlushed == 0);
-			assert(_entries.size() == 0);
-			return;
-		}
 
 		flushBuffer(); // Flush all remaining events
 		_file.close(); // close the file only at the end.
-
-		//BufferSet<BUFFERSIZE>::_singleton.AddToReport(_fileName);
 	}
+
 
 	template <size_t I>
 	BufferSet<I>::BufferSet():
@@ -581,14 +556,10 @@ namespace profiler {
 			throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
 	}
 
+
 	template <size_t BUFFERSIZE>
 	BufferSet<BUFFERSIZE>::~BufferSet()
 	{
-		std::string ret;
-
-
-		this->AddToReport(ret);
-
 		std::string hostname = getHostName();
 		int ncores = getNumberOfCores();
 		size_t nthreads = _tcounter - 1;
