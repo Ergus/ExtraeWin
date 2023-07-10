@@ -85,7 +85,7 @@ namespace profiler {
 #endif
 
 	/**
-	   Get microseconds since epoch for a given timePoint
+	   Get microseconds since the trace begins for a given timePoint
 	*/
 	inline uint64_t getNanoseconds()
 	{
@@ -105,12 +105,20 @@ namespace profiler {
 	/**
 	   Buffer class to store the events.
 
-	   This class will always have a file associated to it to flush all the data when needed.  There
-	   will be 1 Buffer/Core in order to make the tracing events registration completely lock free.
+	   This class will always have a file associated to it to flush all the data
+	   when needed.  There will be 1 Buffer/Core in order to make the tracing
+	   events registration completely lock free.
 	*/
 	template <size_t BUFFERSIZE>
 	class Buffer {
 
+		/**
+		   Header struct
+
+		   This is the struct that will be written in the header of the
+		   file. This is update don every flush and keeps information needed in
+		   the head of the file to read it latter.
+		 */
 		struct TraceHeader {
 			uint32_t _id;   // Can be cpuID or ThreadID
 			uint32_t _totalFlushed;
@@ -187,12 +195,11 @@ namespace profiler {
 		}
 
 	  public:
+		Buffer(const Buffer &) = delete;
+		Buffer &operator=(const Buffer &) =  delete;
 
 		Buffer(uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime);
 
-		/**
-		   Destructor for the buffer type.
-		*/
 		~Buffer();
 
 		void emplace(uint16_t id, uint16_t value)
@@ -577,7 +584,6 @@ namespace profiler {
 		rowfile << "\nLEVEL THREAD SIZE " << nthreads << std::endl;
 		for (size_t i = 1; i <= nthreads; ++i)
 			rowfile << "THREAD 1.1." << i << std::endl;
-
 		rowfile.close();
 
 		// PCF File
