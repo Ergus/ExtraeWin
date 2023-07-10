@@ -87,7 +87,7 @@ namespace profiler {
 	/**
 	   Get microseconds since epoch for a given timePoint
 	*/
-	inline unsigned long getNanoseconds()
+	inline uint16_t getNanoseconds()
 	{
 		// Store the very first time we enter this function and then return the
 		// number of nanoseconds AFTER this first call.
