@@ -18,9 +18,9 @@ namespace profiler {
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
+	#include <windows.h>
 	#include <processthreadsapi.h>
 	#include <winbase.h>
-	#include <windows.h>
 
 	inline int getNumberOfCores() {
 		SYSTEM_INFO sysinfo;
@@ -45,7 +45,10 @@ namespace profiler {
 
 		// Get and display the name of the computer.
 		if (!GetComputerName( infoBuf, &bufCharCount ) )
-			printError( TEXT("GetComputerName") ); 
+		{
+			perror("GetComputerName failed");
+			abort();
+		} 
 
 		return infoBuf;
 	}
