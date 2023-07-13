@@ -235,20 +235,42 @@ namespace profiler {
 		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
 		static constexpr T maxEvent = std::numeric_limits<T>::max();
 
-		T registerName(const std::string &name, T value)
+		struct nameEntry
+		{
+			std::string eventName;
+			std::string fileName;
+			size_t line;
+
+			bool operator==(const nameEntry &other) const
+			{
+				return eventName == other.eventName
+					&& fileName == other.fileName
+					&& line == other.line;
+			}
+			bool operator!=(const nameEntry &other) const
+			{
+				return !(*this == other);
+			}
+		};
+
+
+		T registerName(
+			const std::string &name, T value,
+			const std::string &fileName, size_t line
+		)
 		{
 			if (value > maxUserEvent)
 			{
 				const std::string message
 					= "Cannot register event: '" + name
 					+ "' with id: " + std::to_string(value)
-					+ " user value limit is: '" + std::to_string(value) + "'";
+					+ " user value limit is: '" + std::to_string(maxUserEvent) + "'";
 				throw std::runtime_error(message);
 			}
 
 			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto it = _namesMap.emplace(value, name);
-			const std::string valueInside = it.first->second;
+			auto it = _namesMap.emplace(value, nameEntry{name, fileName, line});
+			const std::string valueInside = it.first->second.eventName;
 
 			if (valueInside != name)
 			{
@@ -262,12 +284,19 @@ namespace profiler {
 			return value;
 		}
 
-		T autoRegisterName(const std::string &name)
+		T autoRegisterName(
+			const std::string &name,
+			const std::string &fileName = "profiler", size_t line = 0
+		)
 		{
+			nameEntry entry {
+				name, fileName, line
+			};
+
 			std::lock_guard<std::mutex> lk(_namesMutex);
 			auto it =_namesMap.lower_bound(_counter);
 
-			while ((it = _namesMap.emplace_hint(it, ++_counter, name))->second != name) {
+			while ((it = _namesMap.emplace_hint(it, ++_counter, entry))->second != entry) {
 				// If counter goes to zero there is overflow, so, no empty places.
 				if (_counter == maxEvent)
 					throw std::runtime_error("Profiler cannot register event: " + name);
@@ -289,7 +318,7 @@ namespace profiler {
 	private:
 		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
 		T _counter = maxUserEvent;           /**< counter for automatic function registration */
-		std::map<T, std::string> _namesMap;  /**< map with the events names */
+		std::map<T, nameEntry> _namesMap;    /**< map with the events names */
 	}; // NameSet
 
 
@@ -477,14 +506,15 @@ namespace profiler {
 
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	 */
-	template <size_t I=(1 << 20)>
-	inline uint16_t registerName(const std::string &name, uint16_t value = 0)
+	template <uint16_t value = 0, size_t I=(1 << 20)>
+	inline uint16_t registerName(
+		const std::string &name, const std::string &fileName = "", size_t line = ""
+	)
 	{
+		if constexpr (value != 0)
+			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerName(name, value, fileName, line);
 
-		if (value != 0)
-			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerName(name, value);
-
-		return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name);
+		return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
 	}
 
 
@@ -564,8 +594,8 @@ namespace profiler {
 	}
 
 
-	template <size_t BUFFERSIZE>
-	BufferSet<BUFFERSIZE>::~BufferSet()
+	template <size_t I>
+	BufferSet<I>::~BufferSet()
 	{
 		std::string hostname = getHostName();
 		int ncores = getNumberOfCores();
@@ -590,11 +620,16 @@ namespace profiler {
 		std::ofstream pcffile(_traceDirectory + "/Trace.pcf", std::ios::out);
 		for (auto it : eventsNames)
 		{
+			const NameSet<uint16_t>::nameEntry &nameEntry = it.second;
+
+			pcffile << "# " << nameEntry.fileName << ":" <<  nameEntry.line << std::endl;
 			pcffile << "EVENT TYPE" << std::endl;
-			pcffile << "0 " << std::to_string(it.first) << " " << it.second << std::endl;
+			pcffile << "0 " << std::to_string(it.first) << " " << nameEntry.eventName << std::endl;
 			pcffile << std::endl;
 		}
 		pcffile.close();
+
+		std::cout << "# Profiler TraceDir: " << _traceDirectory << std::endl;
 
 	}
 
@@ -611,3 +646,23 @@ namespace profiler {
 
 
 }
+
+#if PROFILER_ENABLED == 1
+
+#define TOKEN_PASTE(x, y) x##y
+#define CAT(X,Y) TOKEN_PASTE(X,Y)
+
+#define INSTRUMENT_EVENT(NAME)										   \
+	static uint16_t CAT(__profiler_id_,NAME) = profiler::registerName(#NAME, __FILE__, __LINE__); \
+	profiler::ProfilerGuard guard(CAT(__profiler_id_,NAME), 1);
+
+#define INSTRUMENT_FUNCTION												\
+	static uint16_t __profiler_function_event_value = profiler::registerName(__func__, __FILE__, __LINE__); \
+	profiler::ProfilerGuard guard(__profiler_function_event_value, 1);
+
+#else
+
+#define INSTRUMENT_FUNCTION
+#define INSTRUMENT_EVENT
+
+#endif //

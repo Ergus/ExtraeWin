@@ -3,6 +3,8 @@ MAIN:=main.x
 
 all: $(MAIN)
 
+CXXFLAGS += -DPROFILER_ENABLED
+
 %.x: %.o Profiler.hpp
 	$(CXX) $< -o $@
 

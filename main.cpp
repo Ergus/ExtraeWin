@@ -18,18 +18,26 @@
 
 #include "Profiler.hpp"
 
-void threadFuncion(size_t id)
+void threadFuncion1(size_t id)
 {
-	static uint16_t _functionID = profiler::registerName(__func__);
-	profiler::ProfilerGuard guard(_functionID, id + 1);
+	INSTRUMENT_FUNCTION;
 
 	for (size_t i = 0; i < 10; ++i) {
-		static uint16_t _loopID = profiler::registerName("Loop", 11);
-		profiler::ProfilerGuard guard2(_loopID, i + 1);
-
+		INSTRUMENT_EVENT(LOOP1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
+
+void threadFuncion2(size_t id)
+{
+	INSTRUMENT_FUNCTION;
+
+	for (size_t i = 0; i < 10; ++i) {
+		INSTRUMENT_EVENT(LOOP2);
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+	}
+}
+
 
 
 int main()
@@ -39,22 +47,25 @@ int main()
 	std::vector<std::thread> threadVector;
 
 	for (size_t i = 0; i < 10; ++i) {
-		threadVector.emplace_back(threadFuncion, i);
+		threadVector.emplace_back(threadFuncion1, i);
 	}
 
 	for(auto& t: threadVector)
 		t.join();
 
+	std::cout << "Sleep" << std::endl;
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	std::cout << "Wake Up" << std::endl;
 
 	threadVector.clear();
 	for (size_t i = 0; i < 10; ++i) {
-		threadVector.emplace_back(threadFuncion, i);
+		threadVector.emplace_back(threadFuncion2, i);
 	}
 
 	for(auto& t: threadVector)
 		t.join();
 
 
+	std::cout << "Exit Main" << std::endl;
 	return 0;
 }

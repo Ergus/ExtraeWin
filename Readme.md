@@ -41,4 +41,4 @@ must be in the range: 1-65535.
 
 - 0 Don't use it!!
 - 1 - 32768 User events manually defined.
-- 32769 - 65536 Are reserved for auto-registered functions and internal 
+- 32769 - 65536 Are reserved for auto-registered functions and internal
