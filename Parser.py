@@ -135,10 +135,8 @@ class ParsedTraces:
 
     def _eventToStr(self, event) -> str:
         '''Print an event'''
-        ttime: Final[int] = event['time'] - self.startEvent['time']
-
         ## type:cpu:app:task:thread:time:event:value
-        return f"2:{event['core']}:1:1:{event['tid']}:{ttime}:{event['id']}:{event['value']}"
+        return f"2:{event['core']}:1:1:{event['tid']}:{event['time']}:{event['id']}:{event['value']}"
 
     def __str__(self):
         '''Get the full trace'''
