@@ -39,50 +39,100 @@ public:
 		}
 	};
 
-	TraceHeader _header;
 	std::vector<EventEntry> _body;
+	std::set<uint16_t> _coresList, _threadList;
+	uint64_t _startGTime = 0;
 
 	operator const std::vector<EventEntry>&() const
 	{
 		return _body;
 	}
 
+	TraceFile() = default;
 
-	TraceFile(const TraceHeader &header, std::vector<EventEntry> body)
-		: _header(header), _body(std::move(body))
+	explicit TraceFile(std::vector<EventEntry> body)
+		: _body(std::move(body))
 	{
 	}
 
 	explicit TraceFile(const std::filesystem::path &filePath)
 	{
+		TraceHeader header;
+
 		std::ifstream file(filePath.string(), std::ios::in | std::ios::binary);
 
 		if (!file)
 			throw std::runtime_error("Failed to open file: " + filePath.string());
 
-		file.read(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
+		file.read(reinterpret_cast<char *>(&header), sizeof(TraceHeader));
 
-		const size_t size = _header._size;
+		const size_t size = header._size;
 		_body.resize(size);
 
 		file.read(reinterpret_cast<char *>(_body.data()), size* sizeof(EventEntry));
+
+		for (const EventEntry &it: _body) {
+			_coresList.emplace(it._core);
+			_threadList.emplace(it._thread);
+		}
+
+		_startGTime = header._startGTime;
 	}
 
 
-	static TraceFile mergeTwo(const TraceFile  &a, const TraceFile &b)
+	TraceFile(const TraceFile  &a, const TraceFile &b)
 	{
-		std::vector<EventEntry> res;
 		const uint32_t totalSize = a._body.size() + b._body.size();
-
-		res.reserve(totalSize);
+		_body.reserve(totalSize);
 
 		std::merge(a._body.begin(), a._body.end(),
 		           b._body.begin(), b._body.end(),
-		           std::back_inserter(res));
+		           std::back_inserter(_body));
 
-		TraceHeader _header = {0, totalSize, 0, a._header._startGTime};
+		std::set_union(a._coresList.begin(), a._coresList.end(),
+		               b._coresList.begin(), b._coresList.end(),
+		               std::inserter(_coresList, _coresList.begin()));
 
-		return TraceFile(_header, res);
+		std::set_union(a._threadList.begin(), a._threadList.end(),
+		               b._threadList.begin(), b._threadList.end(),
+		               std::inserter(_threadList, _threadList.begin()));
+
+		_startGTime = std::min(a._startGTime, b._startGTime);
+	}
+
+	TraceFile(const std::vector<TraceFile> &_traces)
+	{
+		std::vector<TraceFile> traces = _traces;
+
+		while(traces.size() > 1) {
+			std::vector<TraceFile> merged;
+
+			for (size_t i = 0; i < traces.size(); i += 2) {
+				if (traces.size() - i > 1)
+					merged.emplace_back(traces[i], traces[i+1]);
+				else
+					merged.emplace_back(traces[i]);
+			}
+			traces = std::move(merged);
+		}
+
+		*this = traces[0];
+	}
+
+
+
+	std::string getHeaderLine() const
+	{
+		assert(_startGTime != 0);
+
+		const uint64_t elapsed = _body.back()._time - _body.front()._time;
+
+		const time_t localTime = static_cast<time_t>(_startGTime);
+
+		std::stringstream ss;
+		ss << "#Paraver " << std::put_time(std::localtime(&localTime), "(%d/%m/%Y at %H:%M):")
+		   << elapsed << "_ns:1(" << _coresList.size() << "):1:1(" << _threadList.size() << ":1)";
+		return ss.str();
 	}
 
 	friend std::ostream& operator<<(std::ostream& os, const TraceFile& in)
@@ -96,74 +146,7 @@ public:
 
 
 class ParsedTraces {
-	std::map<uint16_t, TraceFile> _traceMap;
-
-	uint64_t _startGlobalTime = 0;
-	TraceFile::EventEntry _startEvent, _lastEvent;
-
-	std::set<uint16_t> _coresList, _threadList;
-
-	void addTraceFile(const std::string &fileName)
-	{
-		TraceFile tFile(fileName);
-
-		const uint16_t key = tFile._header._id;
-
-		auto emplaced = _traceMap.emplace(key, std::move(tFile));
-
-		if (!emplaced.second)
-			throw std::runtime_error("Error repeated input id: " + std::to_string(key));
-
-		TraceFile &entry = emplaced.first->second;
-		if (entry._header._id == 1)
-		{
-			_startEvent = entry._body.front();
-			_lastEvent = entry._body.back();
-			_startGlobalTime = entry._header._startGTime;
-		}
-
-		_threadList.emplace(key);
-
-		for (const auto &it : entry._body)
-			_coresList.emplace(it._core);
-
-	}
-
-	std::string getHeaderLine() const
-	{
-		assert(_startGlobalTime != 0);
-
-		const uint64_t elapsed = _lastEvent._time - _startEvent._time;
-
-		const time_t localTime = static_cast<time_t>(_startGlobalTime);
-
-		std::stringstream ss;
-		ss << "#Paraver " << std::put_time(std::localtime(&localTime), "(%d/%m/%Y at %H:%M):")
-		   << elapsed << "_ns:1(" << _coresList.size() << "):1:1(" << _threadList.size() << ":1)";
-		return ss.str();
-	}
-
-	TraceFile merge() const
-	{
-		std::vector<TraceFile> traces, merged;
-
-		// Copy the values
-		for (const auto &it : _traceMap)
-			traces.push_back(it.second);
-
-		while(traces.size() > 1) {
-			for (size_t i = 0; i < traces.size(); i += 2) {
-				merged.push_back(
-					traces.size() - i > 1
-					? TraceFile::mergeTwo(traces[i], traces[i+1])
-					: traces[i]
-				);
-			}
-			traces = std::move(merged);
-		}
-
-		return traces[0];
-	}
+	std::vector<TraceFile> _traceMap;
 
 public:
 	explicit ParsedTraces(const std::filesystem::path &dirPath)
@@ -183,15 +166,15 @@ public:
 				continue;
 
 			std::cout << "Processing trace file: " << file.path() << std::endl;
-			this->addTraceFile(file.path());
+			_traceMap.emplace_back(file.path());
 		}
 	}
 
 	friend std::ostream& operator<<(std::ostream& os, const ParsedTraces& in)
 	{
-		os << in.getHeaderLine() << std::endl;
+		TraceFile tmp(in._traceMap);
 
-		TraceFile tmp = in.merge();
+		os << tmp.getHeaderLine() << std::endl;
 		os << tmp << std::endl;
 
 		return os;
@@ -214,6 +197,8 @@ int main(int argc, char **argv)
 	std::ofstream traceFile(outFilePath, std::ios::out | std::ios::binary);
 
 	traceFile << traces << std::endl;
+
+	std::cout << "Trace file created: " << outFilePath << std::endl;
 
 	return 0;
 }
