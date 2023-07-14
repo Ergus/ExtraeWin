@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <algorithm>
 #include <filesystem>
+#include <numeric>
+#include <limits>
 
 class TraceFile {
 
@@ -41,7 +43,7 @@ public:
 
 	std::vector<EventEntry> _body;
 	std::set<uint16_t> _coresList, _threadList;
-	uint64_t _startGTime = 0;
+	uint64_t _startGTime = std::numeric_limits<uint64_t>::max();
 
 	operator const std::vector<EventEntry>&() const
 	{
@@ -49,11 +51,6 @@ public:
 	}
 
 	TraceFile() = default;
-
-	explicit TraceFile(std::vector<EventEntry> body)
-		: _body(std::move(body))
-	{
-	}
 
 	explicit TraceFile(const std::filesystem::path &filePath)
 	{
@@ -79,47 +76,29 @@ public:
 		_startGTime = header._startGTime;
 	}
 
-
-	TraceFile(const TraceFile  &a, const TraceFile &b)
+	friend TraceFile operator+(const TraceFile &a, const TraceFile &b)
 	{
+		TraceFile ret;
+
 		const uint32_t totalSize = a._body.size() + b._body.size();
-		_body.reserve(totalSize);
+		ret._body.reserve(totalSize);
 
 		std::merge(a._body.begin(), a._body.end(),
 		           b._body.begin(), b._body.end(),
-		           std::back_inserter(_body));
+		           std::back_inserter(ret._body));
 
 		std::set_union(a._coresList.begin(), a._coresList.end(),
 		               b._coresList.begin(), b._coresList.end(),
-		               std::inserter(_coresList, _coresList.begin()));
+		               std::inserter(ret._coresList, ret._coresList.begin()));
 
 		std::set_union(a._threadList.begin(), a._threadList.end(),
 		               b._threadList.begin(), b._threadList.end(),
-		               std::inserter(_threadList, _threadList.begin()));
+		               std::inserter(ret._threadList, ret._threadList.begin()));
 
-		_startGTime = std::min(a._startGTime, b._startGTime);
+		ret._startGTime = std::min(a._startGTime, b._startGTime);
+
+		return ret;
 	}
-
-	TraceFile(const std::vector<TraceFile> &_traces)
-	{
-		std::vector<TraceFile> traces = _traces;
-
-		while(traces.size() > 1) {
-			std::vector<TraceFile> merged;
-
-			for (size_t i = 0; i < traces.size(); i += 2) {
-				if (traces.size() - i > 1)
-					merged.emplace_back(traces[i], traces[i+1]);
-				else
-					merged.emplace_back(traces[i]);
-			}
-			traces = std::move(merged);
-		}
-
-		*this = traces[0];
-	}
-
-
 
 	std::string getHeaderLine() const
 	{
@@ -172,7 +151,7 @@ public:
 
 	friend std::ostream& operator<<(std::ostream& os, const ParsedTraces& in)
 	{
-		TraceFile tmp(in._traceMap);
+		TraceFile tmp = std::reduce(in._traceMap.begin(), in._traceMap.end());
 
 		os << tmp.getHeaderLine() << std::endl;
 		os << tmp << std::endl;
