@@ -1,5 +1,7 @@
 #pragma once
 
+#if PROFILER_ENABLED > 0
+
 #include <iostream>
 #include <string.h>
 #include <vector>
@@ -646,8 +648,6 @@ namespace profiler {
 
 
 }
-
-#if PROFILER_ENABLED == 1
 
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
