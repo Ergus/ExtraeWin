@@ -243,6 +243,9 @@ namespace profiler {
 			std::string fileName;
 			size_t line;
 
+			std::map<T,std::string> _namesValuesMap;
+
+			// Needed to compare entries
 			bool operator==(const nameEntry &other) const
 			{
 				return eventName == other.eventName
@@ -255,35 +258,66 @@ namespace profiler {
 			}
 		};
 
-
-		T registerName(
-			const std::string &name, T value,
+		T registerEventName(
+			const std::string &name, T event,
 			const std::string &fileName, size_t line
 		)
 		{
-			if (value > maxUserEvent)
+			if (event > maxUserEvent)
 			{
 				const std::string message
 					= "Cannot register event: '" + name
-					+ "' with id: " + std::to_string(value)
-					+ " user value limit is: '" + std::to_string(maxUserEvent) + "'";
+					+ "' with id: " + std::to_string(event)
+					+ " user event value limit is: '" + std::to_string(maxUserEvent) + "'";
 				throw std::runtime_error(message);
 			}
 
 			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto it = _namesMap.emplace(value, nameEntry{name, fileName, line});
-			const std::string valueInside = it.first->second.eventName;
+			auto it = _namesEventMap.emplace(event, nameEntry{name, fileName, line});
 
-			if (valueInside != name)
+			// If not inserted
+			if (!it.second)
 			{
+				const std::string eventNameInside = it.first->second.eventName;
+
 				const std::string message
 					= "Cannot register event: '" + name
-					+ "' with id: " + std::to_string(value)
-					+ " the id is already taken by: '" + valueInside + "'";
+					+ "' with id: " + std::to_string(event)
+					+ " the id is already taken by: '" + eventNameInside + "'";
 				throw std::runtime_error(message);
 			}
 
-			return value;
+			return event;
+		}
+
+		T registerValueName(
+			const std::string &name, T event, T value,
+			const std::string &fileName, size_t line
+		)
+		{
+			std::lock_guard<std::mutex> lk(_namesMutex);
+			auto itEvent = _namesEventMap.find(event);
+
+			if (itEvent == _namesEventMap.end())
+			{
+				const std::string message
+					= "Cannot register event value: '" + name
+					+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
+					+ " the event ID does not exist.";
+				throw std::runtime_error(message);
+			}
+
+			auto itValue = itEvent->second._namesValuesMap.emplace(value, name);
+			if (!itValue.second)
+			{
+				const std::string message
+					= "Cannot cannot register event value: '" + name
+					+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
+					+ " it is already taken by '" + itValue.first->second;
+				throw std::runtime_error(message);
+			}
+
+			return event;
 		}
 
 		T autoRegisterName(
@@ -296,9 +330,9 @@ namespace profiler {
 			};
 
 			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto it =_namesMap.lower_bound(_counter);
+			auto it =_namesEventMap.lower_bound(_counter);
 
-			while ((it = _namesMap.emplace_hint(it, ++_counter, entry))->second != entry) {
+			while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
 				// If counter goes to zero there is overflow, so, no empty places.
 				if (_counter == maxEvent)
 					throw std::runtime_error("Profiler cannot register event: " + name);
@@ -309,18 +343,18 @@ namespace profiler {
 
 		auto begin() const
 		{
-			return _namesMap.begin();
+			return _namesEventMap.begin();
 		}
 
 		auto end() const
 		{
-			return _namesMap.end();
+			return _namesEventMap.end();
 		}
 
 	private:
 		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
 		T _counter = maxUserEvent;           /**< counter for automatic function registration */
-		std::map<T, nameEntry> _namesMap;    /**< map with the events names */
+		std::map<T, nameEntry> _namesEventMap;    /**< map with the events names */
 	}; // NameSet
 
 
@@ -508,15 +542,19 @@ namespace profiler {
 
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	 */
-	template <uint16_t value = 0, size_t I=(1 << 20)>
 	inline uint16_t registerName(
-		const std::string &name, const std::string &fileName = "", size_t line = ""
+		const std::string &name, const std::string &fileName, size_t line,
+		uint16_t event = 0, uint16_t value = 0
 	)
 	{
-		if constexpr (value != 0)
-			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerName(name, value, fileName, line);
+		constexpr size_t I = (1 << 20);
 
-		return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
+		if (event == 0)
+			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
+		else if (value == 0)
+			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
+		else
+			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
 	}
 
 
@@ -627,7 +665,15 @@ namespace profiler {
 			pcffile << "# " << nameEntry.fileName << ":" <<  nameEntry.line << std::endl;
 			pcffile << "EVENT_TYPE" << std::endl;
 			pcffile << "0 " << std::to_string(it.first) << " " << nameEntry.eventName << std::endl;
+			if (!nameEntry._namesValuesMap.empty())
+			{
+				pcffile << "VALUES" << std::endl;
+				for (auto itValues : nameEntry._namesValuesMap)
+					pcffile << itValues.first << " " << itValues.second << std::endl;
+			}
+
 			pcffile << std::endl;
+
 		}
 		pcffile.close();
 
