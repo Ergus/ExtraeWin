@@ -672,7 +672,7 @@ namespace profiler {
 
 			pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
 			pcffile << "EVENT_TYPE" << std::endl;
-			pcffile << "0 " << std::to_string(it.first) << " " << eventEntry.name << std::endl;
+			pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
 
 			// Create a "VALUES" sections if some value is registered for this event
 			if (!eventEntry._namesValuesMap.empty())
@@ -682,9 +682,11 @@ namespace profiler {
 				{
 					const auto &valueEntry = itValues.second;
 
-					pcffile << itValues.first << " " << valueEntry.name;
-					if (!valueEntry.fileName.empty())
-						pcffile << " (" << valueEntry.fileName << ":" << valueEntry.line << ")";
+					pcffile << itValues.first << " " << eventEntry.name;
+					if (!valueEntry.name.empty())                 // Add the Value name if set
+						pcffile << ":" << valueEntry.name;
+					else if (!valueEntry.fileName.empty())        // Else try to 
+						pcffile << ":(" << valueEntry.fileName << ":" << valueEntry.line << ")";
 
 					pcffile << std::endl;
 				}
@@ -730,7 +732,7 @@ namespace profiler {
 
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE)								\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
-		profiler::registerName(std::string(__func__) +":"+std::to_string(__LINE__), __FILE__, __LINE__, __profiler_function_event, VALUE); \
+		profiler::registerName("", __FILE__, __LINE__, __profiler_function_event, VALUE); \
 	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_event, VALUE)
 
 #else
