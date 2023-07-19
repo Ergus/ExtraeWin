@@ -559,8 +559,9 @@ namespace profiler {
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	 */
 	inline uint16_t registerName(
-		std::string name, const std::string &fileName, size_t line,
-		uint16_t event = 0, uint16_t value = 0
+		std::string name,
+		const std::string &fileName, size_t line,
+		uint16_t event, uint16_t value
 	)
 	{
 		constexpr size_t I = (1 << 20);
@@ -729,9 +730,15 @@ namespace profiler {
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
 
-#define INSTRUMENT_SCOPE(EVENT, VALUE, ...)							\
+/**
+   Instrument the function scope
+
+   Similar to instrument function, but requires more parameters. This can be
+   nested inside functions to generate independent events.
+ */
+#define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
 	static uint16_t CAT(__profiler_id_,EVENT) =							\
-		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT); \
+		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT, 0); \
 	profiler::ProfilerGuard guard(EVENT, VALUE);
 
 /**
@@ -744,7 +751,7 @@ namespace profiler {
  */
 #define INSTRUMENT_FUNCTION												\
 	static uint16_t __profiler_function_id =							\
-		profiler::registerName(__func__, __FILE__, __LINE__);			\
+		profiler::registerName(__func__, __FILE__, __LINE__, 0, 0);		\
 	profiler::ProfilerGuard guard(__profiler_function_id, 1);
 
 /**
