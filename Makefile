@@ -5,7 +5,9 @@ all: $(MAIN)
 
 CXXFLAGS += -DPROFILER_ENABLED -ggdb
 
-%.x: %.o Profiler.hpp
+main.x: Profiler.hpp
+
+%.x: %.o
 	$(CXX) $< -o $@
 
 .PHONY: clean cleanall test
@@ -16,5 +18,5 @@ clean:
 cleanall:
 	rm -rf *.x *.bin *.txt TRACEDIR*
 
-test: $(MAIN) Profiler.hpp
+test: $(MAIN)  Parser.x
 	./$(MAIN)
