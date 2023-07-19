@@ -23,7 +23,7 @@ void threadFuncion1(size_t id)
 	INSTRUMENT_FUNCTION;
 
 	for (size_t i = 0; i < 10; ++i) {
-		INSTRUMENT_EVENT(LOOP, 10);
+		INSTRUMENT_EVENT(10, "LOOP");
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
@@ -32,7 +32,7 @@ void threadFuncion2(size_t id)
 {
 	INSTRUMENT_FUNCTION;
 
-	INSTRUMENT_FUNCTION_UPDATE2(10, LOOP1);
+	INSTRUMENT_FUNCTION_UPDATE(10, "LOOP1");
 	for (size_t i = 0; i < 10; ++i) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}

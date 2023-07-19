@@ -713,28 +713,51 @@ namespace profiler {
 		}
 }
 
+/**
+  \defgroup public interface
+  \brief This is the simpler linker list and its functions
+
+  Here starts what is intended to be the public interface:
+  A set of macros that generate instrumentation when PROFILER_ENABLED > 0
+  otherwise they expand to nothing.
+  @{
+*/
+
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
 
-#define INSTRUMENT_EVENT(NAME, EVENT)									\
-	static uint16_t CAT(__profiler_id_,NAME) = profiler::registerName(#NAME, __FILE__, __LINE__, EVENT); \
-	profiler::ProfilerGuard guard(CAT(__profiler_id_,NAME), EVENT);
+#define INSTRUMENT_EVENT(EVENT, NAME)									\
+	static uint16_t CAT(__profiler_id_,EVENT) =						\
+		profiler::registerName(NAME, __FILE__, __LINE__, EVENT);		\
+	profiler::ProfilerGuard guard(CAT(__profiler_id_,EVENT), EVENT);
 
+/**
+   Main macro to instrument functions.
+
+   This macro creates a new event value = 1 for the __profiler_function_id event.
+   The event start is emitted when the macro is called and extend until the
+   calling scope finalizes.
+   This is intended to be called immediately after a function starts.
+ */
 #define INSTRUMENT_FUNCTION												\
-	static uint16_t __profiler_function_event = profiler::registerName(__func__, __FILE__, __LINE__); \
-	static uint16_t CAT(__profiler_function_,__LINE__) =				\
-		profiler::registerName(__func__, __FILE__, __LINE__, __profiler_function_event, 1); \
-	profiler::ProfilerGuard guard(__profiler_function_event, 1);
+	static uint16_t __profiler_function_id =							\
+		profiler::registerName(__func__, __FILE__, __LINE__);			\
+	profiler::ProfilerGuard guard(__profiler_function_id, 1);
 
-#define INSTRUMENT_FUNCTION_UPDATE2(VALUE, NAME)						\
-	static uint16_t CAT(__profiler_function_,__LINE__) =				\
-		profiler::registerName(#NAME, __FILE__, __LINE__, __profiler_function_event, VALUE); \
-	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_event, VALUE)
+/**
+   Main macro to instrument functions subsections.
 
-#define INSTRUMENT_FUNCTION_UPDATE(VALUE)								\
+   This macro creates a new event value for the __profiler_function_id event.
+   An extra second string argument can be passed to the macro in order to set a
+   custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
+   \param VALUE the numeric value for the event.
+ */
+#define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)						\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
-		profiler::registerName("", __FILE__, __LINE__, __profiler_function_event, VALUE); \
-	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_event, VALUE)
+		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
+	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_id, VALUE)
+
+//!@}
 
 #else
 
