@@ -625,7 +625,7 @@ namespace profiler {
 			const NameSet<uint16_t>::nameEntry &nameEntry = it.second;
 
 			pcffile << "# " << nameEntry.fileName << ":" <<  nameEntry.line << std::endl;
-			pcffile << "EVENT TYPE" << std::endl;
+			pcffile << "EVENT_TYPE" << std::endl;
 			pcffile << "0 " << std::to_string(it.first) << " " << nameEntry.eventName << std::endl;
 			pcffile << std::endl;
 		}
