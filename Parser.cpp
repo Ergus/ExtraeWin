@@ -172,7 +172,7 @@ int main(int argc, char **argv)
 	std::filesystem::path dirPath(argv[1]);
 	ParsedTraces traces(dirPath);
 
-	std::filesystem::path outFilePath(dirPath / "Trace2.prv");
+	std::filesystem::path outFilePath(dirPath / "Trace.prv");
 	std::ofstream traceFile(outFilePath, std::ios::out | std::ios::binary);
 
 	traceFile << traces << std::endl;
