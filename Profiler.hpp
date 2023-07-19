@@ -719,13 +719,19 @@ namespace profiler {
 
 #define INSTRUMENT_FUNCTION												\
 	static uint16_t __profiler_function_event = profiler::registerName(__func__, __FILE__, __LINE__); \
+	static uint16_t CAT(__profiler_function_,__LINE__) =				\
+		profiler::registerName(__func__, __FILE__, __LINE__, __profiler_function_event, 1); \
 	profiler::ProfilerGuard guard(__profiler_function_event, 1);
 
 #define INSTRUMENT_FUNCTION_UPDATE2(VALUE, NAME)						\
-	static uint16_t CAT(__profiler_function_,__LINE__) =							\
+	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(#NAME, __FILE__, __LINE__, __profiler_function_event, VALUE); \
 	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_event, VALUE)
 
+#define INSTRUMENT_FUNCTION_UPDATE(VALUE)								\
+	static uint16_t CAT(__profiler_function_,__LINE__) =				\
+		profiler::registerName(std::string(__func__) +":"+std::to_string(__LINE__), __FILE__, __LINE__, __profiler_function_event, VALUE); \
+	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_event, VALUE)
 
 #else
 
