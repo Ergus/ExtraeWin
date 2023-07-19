@@ -567,7 +567,10 @@ namespace profiler {
 		constexpr size_t I = (1 << 20);
 
 		if (name.empty())
-			name = fileName+":"+std::to_string(line);
+		{
+			std::filesystem::path p(fileName);
+			name = p.filename().u8string()+":"+std::to_string(line);
+		}
 
 		if (event == 0)
 			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
