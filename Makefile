@@ -3,7 +3,7 @@ MAIN:=main.x
 
 all: $(MAIN)
 
-CXXFLAGS += -DPROFILER_ENABLED
+CXXFLAGS += -DPROFILER_ENABLED -ggdb
 
 %.x: %.o Profiler.hpp
 	$(CXX) $< -o $@
@@ -16,5 +16,5 @@ clean:
 cleanall:
 	rm -rf *.x *.bin *.txt TRACEDIR*
 
-test: $(MAIN)
+test: $(MAIN) Profiler.hpp
 	./$(MAIN)
