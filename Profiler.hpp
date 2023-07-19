@@ -253,6 +253,10 @@ namespace profiler {
 				return !(*this == other);
 			}
 
+			operator std::string() const
+			{
+				return name + " ("+ fileName + ":" + std::to_string(line) + ")";
+			}
 		};
 
 
@@ -270,6 +274,8 @@ namespace profiler {
 			const std::string &fileName, size_t line
 		)
 		{
+			assert(!name.empty());
+
 			if (event > maxUserEvent)
 			{
 				const std::string message
@@ -285,12 +291,12 @@ namespace profiler {
 			// If not inserted
 			if (!it.second)
 			{
-				const std::string eventNameInside = it.first->second.name;
+				const nameInfo &eventInside = it.first->second;
 
 				const std::string message
 					= "Cannot register event: '" + name
 					+ "' with id: " + std::to_string(event)
-					+ " the id is already taken by: '" + eventNameInside + "'";
+					+ " the id is already taken by: '" + std::string(eventInside) + "'";
 				throw std::runtime_error(message);
 			}
 
@@ -302,6 +308,8 @@ namespace profiler {
 			const std::string &fileName, size_t line
 		)
 		{
+			assert(!name.empty());
+
 			std::lock_guard<std::mutex> lk(_namesMutex);
 			auto itEvent = _namesEventMap.find(event);
 
@@ -332,6 +340,7 @@ namespace profiler {
 			const std::string &fileName = "profiler", size_t line = 0
 		)
 		{
+			assert(!name.empty());
 			nameEntry entry {
 				name, fileName, line
 			};
@@ -550,11 +559,14 @@ namespace profiler {
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	 */
 	inline uint16_t registerName(
-		const std::string &name, const std::string &fileName, size_t line,
+		std::string name, const std::string &fileName, size_t line,
 		uint16_t event = 0, uint16_t value = 0
 	)
 	{
 		constexpr size_t I = (1 << 20);
+
+		if (name.empty())
+			name = fileName+":"+std::to_string(line);
 
 		if (event == 0)
 			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
@@ -680,17 +692,8 @@ namespace profiler {
 			{
 				pcffile << "VALUES" << std::endl;
 				for (auto itValues : eventEntry._namesValuesMap)
-				{
-					const auto &valueEntry = itValues.second;
-
-					pcffile << itValues.first << " " << eventEntry.name;
-					if (!valueEntry.name.empty())                 // Add the Value name if set
-						pcffile << ":" << valueEntry.name;
-					else if (!valueEntry.fileName.empty())        // Else try to 
-						pcffile << ":(" << valueEntry.fileName << ":" << valueEntry.line << ")";
-
-					pcffile << std::endl;
-				}
+					pcffile << itValues.first << " "
+					        << eventEntry.name << ":" << itValues.second.name << std::endl;
 			}
 
 			pcffile << std::endl;
@@ -726,10 +729,10 @@ namespace profiler {
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
 
-#define INSTRUMENT_EVENT(EVENT, NAME)									\
-	static uint16_t CAT(__profiler_id_,EVENT) =						\
-		profiler::registerName(NAME, __FILE__, __LINE__, EVENT);		\
-	profiler::ProfilerGuard guard(CAT(__profiler_id_,EVENT), EVENT);
+#define INSTRUMENT_SCOPE(EVENT, VALUE, ...)							\
+	static uint16_t CAT(__profiler_id_,EVENT) =							\
+		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT); \
+	profiler::ProfilerGuard guard(EVENT, VALUE);
 
 /**
    Main macro to instrument functions.

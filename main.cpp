@@ -23,8 +23,13 @@ void threadFuncion1(size_t id)
 	INSTRUMENT_FUNCTION;
 
 	for (size_t i = 0; i < 10; ++i) {
-		INSTRUMENT_EVENT(10, "LOOP");
-		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+		INSTRUMENT_SCOPE(10, 1 + i, "LOOP");
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+
+	for (size_t i = 0; i < 10; ++i) {
+		INSTRUMENT_SCOPE(11, 1 + i);
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
 }
 
