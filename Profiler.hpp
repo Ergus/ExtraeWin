@@ -35,12 +35,13 @@ namespace profiler {
 	 */
 	inline unsigned int getCPUId()
 	{
-		PROCESSOR_NUMBER procNumber;
-		GetCurrentProcessorNumberEx(&procNumber);
-		return procNumber.Group * 64 + procNumber.Number + 1;
+		return GetCurrentProcessorNumber();
+		// PROCESSOR_NUMBER procNumber;
+		// GetCurrentProcessorNumberEx(&procNumber);
+		// return procNumber.Group * 64 + procNumber.Number + 1;
 	}
 
-	std::string getHostName()
+	inline std::string getHostName()
 	{
 		TCHAR  infoBuf[32767];
 		DWORD  bufCharCount = 32767;
