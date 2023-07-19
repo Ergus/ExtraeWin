@@ -233,29 +233,35 @@ namespace profiler {
 	 */
 	template <typename T>
 	class NameSet {
+
+		struct nameInfo
+		{
+			std::string name;
+			std::string fileName;
+			size_t line;
+
+			// Needed to compare entries
+			bool operator==(const nameInfo &other) const
+			{
+				return name == other.name
+					&& fileName == other.fileName
+					&& line == other.line;
+			}
+			bool operator!=(const nameInfo &other) const
+			{
+				return !(*this == other);
+			}
+
+		};
+
+
 	public:
 		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
 		static constexpr T maxEvent = std::numeric_limits<T>::max();
 
-		struct nameEntry
+		struct nameEntry : public nameInfo
 		{
-			std::string eventName;
-			std::string fileName;
-			size_t line;
-
-			std::map<T,std::string> _namesValuesMap;
-
-			// Needed to compare entries
-			bool operator==(const nameEntry &other) const
-			{
-				return eventName == other.eventName
-					&& fileName == other.fileName
-					&& line == other.line;
-			}
-			bool operator!=(const nameEntry &other) const
-			{
-				return !(*this == other);
-			}
+			std::map<T, nameInfo> _namesValuesMap;
 		};
 
 		T registerEventName(
@@ -278,7 +284,7 @@ namespace profiler {
 			// If not inserted
 			if (!it.second)
 			{
-				const std::string eventNameInside = it.first->second.eventName;
+				const std::string eventNameInside = it.first->second.name;
 
 				const std::string message
 					= "Cannot register event: '" + name
@@ -307,13 +313,13 @@ namespace profiler {
 				throw std::runtime_error(message);
 			}
 
-			auto itValue = itEvent->second._namesValuesMap.emplace(value, name);
+			auto itValue = itEvent->second._namesValuesMap.emplace(value, nameEntry{name, fileName, line});
 			if (!itValue.second)
 			{
 				const std::string message
 					= "Cannot cannot register event value: '" + name
 					+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
-					+ " it is already taken by '" + itValue.first->second;
+					+ " it is already taken by '" + itValue.first->second.name;
 				throw std::runtime_error(message);
 			}
 
@@ -658,18 +664,30 @@ namespace profiler {
 
 		// PCF File
 		std::ofstream pcffile(_traceDirectory + "/Trace.pcf", std::ios::out);
+
+		// Register all Events types names.
 		for (auto it : eventsNames)
 		{
-			const NameSet<uint16_t>::nameEntry &nameEntry = it.second;
+			const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
 
-			pcffile << "# " << nameEntry.fileName << ":" <<  nameEntry.line << std::endl;
+			pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
 			pcffile << "EVENT_TYPE" << std::endl;
-			pcffile << "0 " << std::to_string(it.first) << " " << nameEntry.eventName << std::endl;
-			if (!nameEntry._namesValuesMap.empty())
+			pcffile << "0 " << std::to_string(it.first) << " " << eventEntry.name << std::endl;
+
+			// Create a "VALUES" sections if some value is registered for this event
+			if (!eventEntry._namesValuesMap.empty())
 			{
 				pcffile << "VALUES" << std::endl;
-				for (auto itValues : nameEntry._namesValuesMap)
-					pcffile << itValues.first << " " << itValues.second << std::endl;
+				for (auto itValues : eventEntry._namesValuesMap)
+				{
+					const auto &valueEntry = itValues.second;
+
+					pcffile << itValues.first << " " << valueEntry.name;
+					if (!valueEntry.fileName.empty())
+						pcffile << " (" << valueEntry.fileName << ":" << valueEntry.line << ")";
+
+					pcffile << std::endl;
+				}
 			}
 
 			pcffile << std::endl;
@@ -678,7 +696,6 @@ namespace profiler {
 		pcffile.close();
 
 		std::cout << "# Profiler TraceDir: " << _traceDirectory << std::endl;
-
 	}
 
 
