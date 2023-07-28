@@ -137,6 +137,27 @@ namespace profiler {
 		}
 	};
 
+	struct AllocationEntry {
+		const uint64_t _time;
+		const uint32_t _size;
+		const uint16_t _core;
+		const uint16_t _bitset; // TODO: check to use a bitset here
+
+		static constexpr std::string_view suffix = ".bin2";
+
+		explicit AllocationEntry(uint16_t bitset, uint64_t size, uint16_t)
+			: _time(getNanoseconds()),
+			  _size(size),
+			  _core(getCPUId()),
+			  _bitset(bitset)
+		{
+			// This assertion is a temporal thing until I get a better approach
+			// for overload
+			assert(size < std::numeric_limits<uint32_t>::max());
+		}
+	};
+
+
 	/**
 	   Buffer class to store the events.
 
@@ -411,6 +432,8 @@ namespace profiler {
 		{
 			if constexpr (std::is_same<Tevent,EventEntry>::value)
 				return _eventsMap;
+			else if constexpr (std::is_same<Tevent,AllocationEntry>::value)
+				return _allocationsMap;
 			else
 				static_assert(false);
 		}
@@ -478,6 +501,7 @@ namespace profiler {
 
 		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
+		std::map<size_t, Buffer<I,AllocationEntry>> _allocationsMap;      /**< This map contains the relation tid->id */
 
 		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
 
