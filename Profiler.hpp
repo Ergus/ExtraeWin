@@ -101,9 +101,41 @@ namespace profiler {
 			std::chrono::high_resolution_clock::now() - begin).count();
 	}
 
+	// Default buffer size in bytes
+	static constexpr size_t bSize = (1 << 20);
+
 	// ==================================================
 	// End of the basic functions
 	// ==================================================
+
+	/**
+	   Event struct that will be reported (and saved into the traces files in binary format)
+
+	   I reserve all the negative values for internal events. And positive values for
+	   user/application events.
+	   Every starting event needs and end event. But I cannot ensure that they will be in the
+	   same cpu (due to thread migration), but they will in the same thread. So, I also save the
+	   threadId with every event in order to make a right reconstruction latter.
+	*/
+	struct EventEntry {
+		const uint64_t _time;
+		const uint16_t _id;
+		const uint16_t _value;
+		const uint16_t _core;
+		const uint16_t _thread;
+
+		static constexpr std::string_view suffix = ".bin";
+
+		explicit EventEntry(
+			uint16_t id, uint16_t value, uint16_t thread
+		) : _time(getNanoseconds()),
+			_id(id),
+			_value(value),
+			_core(getCPUId()),
+			_thread(thread)
+		{
+		}
+	};
 
 	/**
 	   Buffer class to store the events.
@@ -112,8 +144,11 @@ namespace profiler {
 	   when needed.  There will be 1 Buffer/Core in order to make the tracing
 	   events registration completely lock free.
 	*/
-	template <size_t BUFFERSIZE>
+	template <size_t I, typename Tevent>
 	class Buffer {
+
+		using inner_type = Tevent;
+		static constexpr size_t _maxEntries = ( I + sizeof(Tevent) - 1 ) / sizeof(Tevent);	 //< Maximum size for the buffers ~ 1Mb >/
 
 		/**
 		   Header struct
@@ -134,40 +169,9 @@ namespace profiler {
 
 		} _header;
 
-
-		/**
-		   Event struct that will be reported (and saved into the traces files in binary format)
-
-		   I reserve all the negative values for internal events. And positive values for
-		   user/application events.
-		   Every starting event needs and end event. But I cannot ensure that they will be in the
-		   same cpu (due to thread migration), but they will in the same thread. So, I also save the
-		   threadId with every event in order to make a right reconstruction latter.
-		 */
-		struct EventEntry {
-			const uint64_t _time;
-			const uint16_t _id;
-			const uint16_t _value;
-			const uint16_t _core;
-			const uint16_t _thread;
-
-			explicit EventEntry(
-				uint16_t id, uint16_t value, uint16_t thread
-			) : _time(getNanoseconds()),
-				_id(id),
-				_value(value),
-				_core(getCPUId()),
-				_thread(thread)
-			{
-			}
-		};
-
-		static constexpr size_t _maxEntries
-			= ( BUFFERSIZE + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);	 //< Maximum size for the buffers ~ 1Mb >/
-
 		std::string _fileName;            //< Name of the binary file with trace information
 		std::ofstream _file;		      //< fstream with file open; every write will be appended and binary. >/
-		std::vector<EventEntry> _entries; //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
+		std::vector<Tevent> _entries; //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
 
 		void flushBuffer()
 		{
@@ -191,7 +195,7 @@ namespace profiler {
 
 			// Go to end and write the data
 			_file.seekp(0, std::ios_base::end);
-			_file.write(reinterpret_cast<char *>(_entries.data()), _entries.size() * sizeof(EventEntry));
+			_file.write(reinterpret_cast<char *>(_entries.data()), _entries.size() * sizeof(Tevent));
 
 			// clear the buffer.
 			_entries.clear();
@@ -389,7 +393,7 @@ namespace profiler {
 	   destructed after the main thread; but in MSWindows the Global variables
 	   seems to be removed before the main thread completes.
 	*/
-	template<size_t BUFFERSIZE>	 //< Maximum size for the buffers ~ 1Mb >/
+	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
 		/**
 		   Static utility function to build the trace directory
@@ -401,6 +405,15 @@ namespace profiler {
 			std::stringstream ss;
 			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
 			return ss.str();
+		}
+
+		template<typename Tevent>
+		std::map<size_t, Buffer<I,Tevent>>& getBufferMap()
+		{
+			if constexpr (std::is_same<Tevent,EventEntry>::value)
+				return _eventsMap;
+			else
+				static_assert(false);
 		}
 
 	public:
@@ -430,15 +443,18 @@ namespace profiler {
 		   the new entry in the map, construct the Buffer and assign an
 		   ordinal id for it.  Any optimization here will be very welcome.
 		*/
-		Buffer<BUFFERSIZE> &getThreadBuffer(size_t tid)
+		template<typename Tevent>
+		Buffer<I, Tevent> &getThreadBuffer(size_t tid)
 		{
+			std::map<size_t, Buffer<I,Tevent>>& theMap = getBufferMap<Tevent>();
+
 			// We attempt to tale the read lock first. If this tid was
 			// already used, the buffer must be already created, and we
 			// don't need the exclusive access.
 			std::shared_lock sharedlock(_mapMutex);
-			auto it = _eventsMap.lower_bound(tid);
+			auto it = theMap.lower_bound(tid);
 
-			if (it != _eventsMap.end() && it->first == tid)
+			if (it != theMap.end() && it->first == tid)
 				return it->second;
 
 			// === else === create new entry: <tid, id>
@@ -449,22 +465,23 @@ namespace profiler {
 			_mapMutex.unlock_shared();
 			std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
 
-			std::string filename
-				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
+			const std::string filename
+				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + std::string(Tevent::suffix);
 
-			it = _eventsMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
+			it = theMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
 
 			return it->second;
 		}
-
 
 	private:
 		const uint64_t _startSystemTimePoint;
 		const std::string _traceDirectory;
 
-		mutable std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<BUFFERSIZE>> _eventsMap; /**< This map contains the relation tid->id */
-		uint32_t _tcounter = 1;                          /**< tid counter always > 0 */
+		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
+		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
+		std::map<size_t, Buffer<I,AllocationEntry>> _allocationsMap; /**< This map contains the relation tid->id */
+
+		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
 
 		friend uint16_t registerName(const std::string &name, uint16_t value);
 
@@ -492,9 +509,8 @@ namespace profiler {
 		const size_t _tid;
 
 	public:
-
 		std::shared_ptr<BufferSet<I>> globalBufferSet;
-		Buffer<I> &buffer;
+		Buffer<I, EventEntry> &eventsBuffer;
 
 		/**
 		   Thread local Info initialization.
@@ -509,7 +525,7 @@ namespace profiler {
 
 		~InfoThread()
 		{
-			buffer.emplace(globalBufferSet->threadEventID, 0);
+			eventsBuffer.emplace(globalBufferSet->threadEventID, 0);
 		}
 	}; // InfoThread
 
@@ -541,7 +557,7 @@ namespace profiler {
 			// This is because the thread-local variables are constructed on demand,
 			// but the static are built before main  (eagerly) So we need to do this
 			// to compute the real execution time.
-			if (getThreadInfo().buffer.getHeader()._id != 1)
+			if (getThreadInfo().eventsBuffer.getHeader()._id != 1)
 				throw std::runtime_error("Master is not running in the first thread");
 
 		}
@@ -564,8 +580,6 @@ namespace profiler {
 		uint16_t event, uint16_t value
 	)
 	{
-		constexpr size_t I = (1 << 20);
-
 		if (name.empty())
 		{
 			std::filesystem::path p(fileName);
@@ -573,11 +587,11 @@ namespace profiler {
 		}
 
 		if (event == 0)
-			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
+			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
 		else if (value == 0)
-			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
+			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
 		else
-			return Global<I>::getThreadInfo().globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
+			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
 	}
 
 
@@ -590,7 +604,7 @@ namespace profiler {
 	   The constructor emits an event that will be paired with the
 	   equivalent one emitted in the destructor.
 	 */
-	template<size_t I = (1 << 20)>	 //< Maximum size for the buffers ~ 1Mb >/
+	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
 
 		const uint16_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
@@ -608,12 +622,12 @@ namespace profiler {
 			: _id(id)
 		{
 			assert(value != 0);
-			Global<I>::getThreadInfo().buffer.emplace(_id, value);
+			Global<I>::getThreadInfo().eventsBuffer.emplace(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			Global<I>::getThreadInfo().buffer.emplace(_id, 0);
+			Global<I>::getThreadInfo().eventsBuffer.emplace(_id, 0);
 		}
 
 	}; // ProfilerGuard
@@ -622,8 +636,8 @@ namespace profiler {
 	// Outline function definitions.
 	// ==================================================
 
-	template <size_t BUFFERSIZE>
-	Buffer<BUFFERSIZE>::Buffer(
+	template <size_t I, typename Tevent>
+	Buffer<I,Tevent>::Buffer(
 		uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime
 	)
 		: _header(id, tid, startGTime),
@@ -635,8 +649,8 @@ namespace profiler {
 	}
 
 
-	template <size_t BUFFERSIZE>
-	Buffer<BUFFERSIZE>::~Buffer()
+	template <size_t I, typename Tevent>
+	Buffer<I,Tevent>::~Buffer()
 	{
 
 		flushBuffer(); // Flush all remaining events
@@ -713,11 +727,11 @@ namespace profiler {
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
 		  globalBufferSet(Global<I>::globalInfo._singleton),
-		  buffer(globalBufferSet->getThreadBuffer(_tid))
-		{
-			assert(_tid == buffer.getHeader()._tid);
-			buffer.emplace(globalBufferSet->threadEventID, buffer.getHeader()._id);
-		}
+		  eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
+	{
+		assert(_tid == eventsBuffer.getHeader()._tid);
+		eventsBuffer.emplace(globalBufferSet->threadEventID, _tid);
+	}
 }
 
 /**
@@ -768,7 +782,7 @@ namespace profiler {
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)						\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<(1 << 20)>::getThreadInfo().buffer.emplace(__profiler_function_id, VALUE)
+	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(__profiler_function_id, VALUE)
 
 //!@}
 
