@@ -20,9 +20,9 @@ namespace profiler {
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
-	#include <windows.h>
-	#include <processthreadsapi.h>
-	#include <winbase.h>
+#include <windows.h>
+#include <processthreadsapi.h>
+#include <winbase.h>
 
 	inline int getNumberOfCores() {
 		SYSTEM_INFO sysinfo;
@@ -32,7 +32,7 @@ namespace profiler {
 
 	/**
 	   Return the cpuID starting by 1
-	 */
+	*/
 	inline unsigned int getCPUId()
 	{
 		return GetCurrentProcessorNumber();
@@ -58,7 +58,7 @@ namespace profiler {
 
 #else
 
-	#include <unistd.h>
+#include <unistd.h>
 
 	inline int getNumberOfCores() {
 		return sysconf(_SC_NPROCESSORS_ONLN);
@@ -66,7 +66,7 @@ namespace profiler {
 
 	/**
 	   Return the cpuID starting by 1
-	 */
+	*/
 	inline unsigned int getCPUId()
 	{
 		const int cpu = sched_getcpu();
@@ -147,7 +147,6 @@ namespace profiler {
 	template <size_t I, typename Tevent>
 	class Buffer {
 
-		using inner_type = Tevent;
 		static constexpr size_t _maxEntries = ( I + sizeof(Tevent) - 1 ) / sizeof(Tevent);	 //< Maximum size for the buffers ~ 1Mb >/
 
 		/**
@@ -156,7 +155,7 @@ namespace profiler {
 		   This is the struct that will be written in the header of the
 		   file. This is update don every flush and keeps information needed in
 		   the head of the file to read it latter.
-		 */
+		*/
 		struct TraceHeader {
 			uint32_t _id;   // Can be cpuID or ThreadID
 			uint32_t _totalFlushed;
@@ -201,7 +200,7 @@ namespace profiler {
 			_entries.clear();
 		}
 
-	  public:
+	public:
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
@@ -235,7 +234,7 @@ namespace profiler {
 	   This is a thread safe container to register the relation between event
 	   name and id. This container is intend to be accessed only once/event to
 	   register the name of the event.
-	 */
+	*/
 	template <typename T>
 	class NameSet {
 
@@ -479,7 +478,6 @@ namespace profiler {
 
 		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
-		std::map<size_t, Buffer<I,AllocationEntry>> _allocationsMap; /**< This map contains the relation tid->id */
 
 		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
 
@@ -535,7 +533,7 @@ namespace profiler {
 	   This gives access to the thread and global static variables. And only
 	   holds one pointer to the BufferSet object to avoid its premature
 	   deletion.
-	 */
+	*/
 	template <size_t I>
 	class Global {
 
@@ -573,7 +571,7 @@ namespace profiler {
 	   Public function to create new events.
 
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
-	 */
+	*/
 	inline uint16_t registerName(
 		std::string name,
 		const std::string &fileName, size_t line,
@@ -603,13 +601,13 @@ namespace profiler {
 	   rely on the instrumentation macro.
 	   The constructor emits an event that will be paired with the
 	   equivalent one emitted in the destructor.
-	 */
+	*/
 	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb >/
 	class ProfilerGuard {
 
 		const uint16_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
 
-	  public:
+	public:
 
 		// Profile guard should be unique.
 		ProfilerGuard(const ProfilerGuard &) = delete;
@@ -617,7 +615,7 @@ namespace profiler {
 
 		/**
 		   Guard constructor.
-		 */
+		*/
 		ProfilerGuard(uint16_t id, uint16_t value)
 			: _id(id)
 		{
@@ -735,13 +733,13 @@ namespace profiler {
 }
 
 /**
-  \defgroup public interface
-  \brief This is the simpler linker list and its functions
+   \defgroup public interface
+   \brief This is the simpler linker list and its functions
 
-  Here starts what is intended to be the public interface:
-  A set of macros that generate instrumentation when PROFILER_ENABLED > 0
-  otherwise they expand to nothing.
-  @{
+   Here starts what is intended to be the public interface:
+   A set of macros that generate instrumentation when PROFILER_ENABLED > 0
+   otherwise they expand to nothing.
+   @{
 */
 
 #define TOKEN_PASTE(x, y) x##y
@@ -752,11 +750,11 @@ namespace profiler {
 
    Similar to instrument function, but requires more parameters. This can be
    nested inside functions to generate independent events.
- */
+*/
 #define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
 	static uint16_t CAT(__profiler_id_,EVENT) =							\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT, 0); \
-	profiler::ProfilerGuard guard(EVENT, VALUE);
+	profiler::ProfilerGuard guard(CAT(__profiler_id_,EVENT), VALUE);
 
 /**
    Main macro to instrument functions.
@@ -765,10 +763,10 @@ namespace profiler {
    The event start is emitted when the macro is called and extend until the
    calling scope finalizes.
    This is intended to be called immediately after a function starts.
- */
-#define INSTRUMENT_FUNCTION												\
-	static uint16_t __profiler_function_id =							\
-		profiler::registerName(__func__, __FILE__, __LINE__, 0, 0);		\
+*/
+#define INSTRUMENT_FUNCTION											\
+	static uint16_t __profiler_function_id =						\
+		profiler::registerName(__func__, __FILE__, __LINE__, 0, 0);	\
 	profiler::ProfilerGuard guard(__profiler_function_id, 1);
 
 /**
@@ -778,11 +776,11 @@ namespace profiler {
    An extra second string argument can be passed to the macro in order to set a
    custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
    \param VALUE the numeric value for the event.
- */
-#define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)						\
+*/
+#define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(__profiler_function_id, VALUE)
+	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(__profiler_function_id, CAT(__profiler_function_,__LINE__))
 
 //!@}
 
