@@ -1,6 +1,6 @@
 #pragma once
 
-#if PROFILER_ENABLED > 0
+#if defined(PROFILER_ENABLED) && PROFILER_ENABLED > 0
 
 #include <iostream>
 #include <string.h>
@@ -507,8 +507,9 @@ namespace profiler {
 
 	public:
 		std::shared_ptr<BufferSet<I>> globalBufferSet;
+
 		Buffer<I, EventEntry> &eventsBuffer;
-		Buffer<I, AllocationEntry> &memoryBuffer;
+		Buffer<I, AllocationEntry> &allocationsBuffer;
 
 		/**
 		   Thread local Info initialization.
@@ -571,6 +572,14 @@ namespace profiler {
 	template <size_t I>
 	Global<I> Global<I>::globalInfo;
 
+	/**
+	   Set the trace memory to false by when thread initialize.
+
+	   So all the threads can initialize (itself and the profiler) without
+	   tracking allocation and create an infty loop... this is not the best
+	   approach because the memory consumed by the thread itself is not tracked,
+	   but only the memory used after the first event within the thread.
+	 */
 	template <size_t I>
 	thread_local bool Global<I>::traceMemory(false);
 
@@ -764,7 +773,7 @@ namespace profiler {
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
 		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
-		, memoryBuffer(globalBufferSet->template getThreadBuffer<AllocationEntry>(_tid))
+		, allocationsBuffer(globalBufferSet->template getThreadBuffer<AllocationEntry>(_tid))
 	{
 		assert(_tid == eventsBuffer.getHeader()._tid);
 		eventsBuffer.emplace(globalBufferSet->threadEventID, _tid);
@@ -784,17 +793,17 @@ namespace profiler {
 void* operator new(size_t sz)
 {
 	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().memoryBuffer.emplace(1, sz);
+		profiler::Global<profiler::bSize>::getThreadInfo().allocationsBuffer.emplace(1, sz);
 
 	return malloc(sz);
 }
 
 void operator delete(void* ptr, size_t sz)
 {
-	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().memoryBuffer.emplace(0, sz);
-
 	free(ptr);
+
+	if (profiler::Global<profiler::bSize>::traceMemory)
+		profiler::Global<profiler::bSize>::getThreadInfo().allocationsBuffer.emplace(0, sz);
 }
 
 /**
