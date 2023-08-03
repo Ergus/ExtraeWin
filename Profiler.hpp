@@ -178,7 +178,7 @@ namespace profiler {
 		   the head of the file to read it latter.
 		*/
 		struct TraceHeader {
-			uint32_t _id;   // Can be cpuID or ThreadID
+			uint32_t _id;   // Can be ThreadID
 			uint32_t _totalFlushed;
 			uint64_t _tid;
 			uint64_t _startGTime;    /**< Start global time >*/
@@ -487,6 +487,8 @@ namespace profiler {
 		NameSet<uint16_t> eventsNames;
 
 		const uint16_t threadEventID;
+		const uint16_t allocationID;
+		const uint16_t deallocationID;
 
 	}; // BufferSet
 
@@ -674,10 +676,12 @@ namespace profiler {
 
 	template <size_t I>
 	BufferSet<I>::BufferSet():
-		_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count()),
-		_traceDirectory(getTraceDirectory(_startSystemTimePoint)),
-		eventsNames(),
-		threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
+		_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
+		, _traceDirectory(getTraceDirectory(_startSystemTimePoint))
+		, eventsNames()
+		, threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
+		, allocationID(eventsNames.autoRegisterName("allocation"))
+		, deallocationID(eventsNames.autoRegisterName("deallocation"))
 	{
 		// Create the directory
 		if (!std::filesystem::create_directory(_traceDirectory))
