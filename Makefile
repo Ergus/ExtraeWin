@@ -1,5 +1,5 @@
 
-MAIN:=main.x
+MAIN:=main.x Parser.x
 
 all: $(MAIN)
 
