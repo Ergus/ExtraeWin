@@ -17,7 +17,7 @@ class TraceFile {
 public:
 	struct TraceHeader {
 		uint32_t _id;   // Can be cpuID or ThreadID
-		uint32_t _size;
+		uint32_t _nentries;
 		uint64_t _tid;
 		uint64_t _startGTime;    /**< Start global time >*/
 	};
@@ -28,29 +28,84 @@ public:
 		uint16_t _value;
 		uint16_t _core;
 		uint16_t _thread;
+	};
 
-		friend std::ostream& operator<<(std::ostream& os, const EventEntry& in)
+	struct AllocationEntry {
+		uint64_t _time;
+		uint32_t _size;
+		uint16_t _core;
+		uint16_t _bitset; // TODO: check to use a bitset here
+	};
+
+	struct InternalEntry {
+
+		uint64_t _time;
+		uint16_t _id;
+		uint16_t _core;
+		uint32_t _value;
+		uint16_t _thread;
+
+		InternalEntry(const EventEntry &event, uint16_t thread)
+			: _time(event._time)
+			, _id(event._id)
+			, _core(event._core)
+			, _value(event._value)
+			, _thread(event._thread)
+		{
+			assert(thread == event._thread);
+		}
+
+		InternalEntry(const AllocationEntry &allocation, uint16_t thread)
+			: _time(allocation._time)
+			, _id(allocation._bitset)
+			, _core(allocation._core)
+			, _value(allocation._size)
+			, _thread(thread)
+		{}
+
+		friend std::ostream& operator<<(std::ostream& os, const InternalEntry& in)
 		{
 			os << "2:" << in._core << ":1:1:" << in._thread << ":" << in._time << ":" << in._id << ":" << in._value;
 			return os;
 		}
 
-		bool operator<(const EventEntry &other) const
+		bool operator<(const InternalEntry &other) const
 		{
 			return _time < other._time;
 		}
 	};
 
-	std::vector<EventEntry> _body;
+	std::vector<InternalEntry> _body;
 	std::set<uint16_t> _coresList, _threadList;
 	uint64_t _startGTime = std::numeric_limits<uint64_t>::max();
 
-	operator const std::vector<EventEntry>&() const
+	operator const std::vector<InternalEntry>&() const
 	{
 		return _body;
 	}
 
 	TraceFile() = default;
+
+	template<typename TEntry>
+	void readEntries(std::ifstream &file, const TraceHeader &header)
+	{
+		const size_t nentries = header._nentries;
+
+		std::vector<TEntry> tmp(nentries);
+
+		_body.reserve(nentries);
+
+		file.read(reinterpret_cast<char *>(tmp.data()), nentries * sizeof(TEntry));
+
+		for (const TEntry &entry : tmp)
+		{
+			_body.emplace_back(entry, header._id);
+
+			const InternalEntry it = _body.back();
+			_coresList.emplace(it._core);
+			_threadList.emplace(it._thread);
+		}
+	}
 
 	explicit TraceFile(const std::filesystem::path &filePath)
 	{
@@ -63,15 +118,12 @@ public:
 
 		file.read(reinterpret_cast<char *>(&header), sizeof(TraceHeader));
 
-		const size_t size = header._size;
-		_body.resize(size);
-
-		file.read(reinterpret_cast<char *>(_body.data()), size* sizeof(EventEntry));
-
-		for (const EventEntry &it: _body) {
-			_coresList.emplace(it._core);
-			_threadList.emplace(it._thread);
-		}
+		if (filePath.extension() == ".bin")
+			readEntries<EventEntry>(file, header);
+		else if (filePath.extension() == ".bin2")
+			readEntries<AllocationEntry>(file, header);
+		else
+			std::runtime_error("File " +  filePath.string() + " has unknown extension.");
 
 		_startGTime = header._startGTime;
 	}
@@ -116,7 +168,7 @@ public:
 
 	friend std::ostream& operator<<(std::ostream& os, const TraceFile& in)
 	{
-		for (const EventEntry &it: in._body)
+		for (const InternalEntry &it: in._body)
 			os << it << "\n";
 		return os;
 	}
@@ -141,7 +193,8 @@ public:
 
 		for (const auto &file : std::filesystem::directory_iterator(dirPath))
 		{
-			if (file.path().extension() != ".bin")
+			if (file.path().extension() != ".bin"
+			    && file.path().extension() != ".bin2")
 				continue;
 
 			std::cout << "Processing trace file: " << file.path() << std::endl;
