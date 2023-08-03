@@ -120,43 +120,17 @@ namespace profiler {
 	struct EventEntry {
 		const uint64_t _time;
 		const uint16_t _id;
-		const uint16_t _value;
 		const uint16_t _core;
-		const uint16_t _thread;
+		const uint32_t _value;
 
-		static constexpr std::string_view suffix = ".bin";
-
-		explicit EventEntry(
-			uint16_t id, uint16_t value, uint16_t thread
-		) : _time(getNanoseconds()),
-			_id(id),
-			_value(value),
-			_core(getCPUId()),
-			_thread(thread)
+		explicit EventEntry(uint16_t id, uint16_t value)
+			: _time(getNanoseconds())
+			, _id(id)
+			, _core(getCPUId())
+			, _value(value)
 		{
 		}
 	};
-
-	struct AllocationEntry {
-		const uint64_t _time;
-		const uint32_t _size;
-		const uint16_t _core;
-		const uint16_t _bitset; // TODO: check to use a bitset here
-
-		static constexpr std::string_view suffix = ".bin2";
-
-		explicit AllocationEntry(uint16_t bitset, uint64_t size, uint16_t)
-			: _time(getNanoseconds()),
-			  _size(size),
-			  _core(getCPUId()),
-			  _bitset(bitset)
-		{
-			// This assertion is a temporal thing until I get a better approach
-			// for overload
-			assert(size < std::numeric_limits<uint32_t>::max());
-		}
-	};
-
 
 	/**
 	   Buffer class to store the events.
@@ -232,11 +206,7 @@ namespace profiler {
 
 		void emplace(uint16_t id, uint16_t value)
 		{
-			_entries.emplace_back(
-				id,
-				value,
-				_header._id  // TID from here
-			);
+			_entries.emplace_back(id, value);
 
 			if (_entries.size() >= _maxEntries)
 				flushBuffer();
@@ -428,17 +398,6 @@ namespace profiler {
 			return ss.str();
 		}
 
-		template<typename Tevent>
-		std::map<size_t, Buffer<I,Tevent>>& getBufferMap()
-		{
-			if constexpr (std::is_same<Tevent,EventEntry>::value)
-				return _eventsMap;
-			else if constexpr (std::is_same<Tevent,AllocationEntry>::value)
-				return _allocationsMap;
-			else
-				static_assert(false);
-		}
-
 	public:
 
 		BufferSet();
@@ -476,7 +435,6 @@ namespace profiler {
 
 		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
-		std::map<size_t, Buffer<I,AllocationEntry>> _allocationsMap;      /**< This map contains the relation tid->id */
 
 		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
 
@@ -509,9 +467,7 @@ namespace profiler {
 
 	public:
 		std::shared_ptr<BufferSet<I>> globalBufferSet;
-
 		Buffer<I, EventEntry> &eventsBuffer;
-		Buffer<I, AllocationEntry> &allocationsBuffer;
 
 		/**
 		   Thread local Info initialization.
@@ -744,15 +700,13 @@ namespace profiler {
 	template <typename Tevent>
 	Buffer<I, Tevent> &BufferSet<I>::getThreadBuffer(size_t tid)
 	{
-		std::map<size_t, Buffer<I,Tevent>>& theMap = getBufferMap<Tevent>();
-
 		// We attempt to tale the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
 		// don't need the exclusive access.
 		std::shared_lock sharedlock(_mapMutex);
-		auto it = theMap.lower_bound(tid);
+		auto it = _eventsMap.lower_bound(tid);
 
-		if (it != theMap.end() && it->first == tid)
+		if (it != _eventsMap.end() && it->first == tid)
 			return it->second;
 
 		// === else === create new entry: <tid, id>
@@ -764,9 +718,9 @@ namespace profiler {
 		std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
 
 		const std::string filename
-			= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + std::string(Tevent::suffix);
+			= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
-		it = theMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
+		it = _eventsMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
 
 		return it->second;
 	}
@@ -777,10 +731,9 @@ namespace profiler {
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
 		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
-		, allocationsBuffer(globalBufferSet->template getThreadBuffer<AllocationEntry>(_tid))
 	{
 		assert(_tid == eventsBuffer.getHeader()._tid);
-		eventsBuffer.emplace(globalBufferSet->threadEventID, _tid);
+		eventsBuffer.emplace(globalBufferSet->threadEventID, 1);
 		Global<profiler::bSize>::traceMemory = true;
 	}
 
@@ -797,7 +750,9 @@ namespace profiler {
 void* operator new(size_t sz)
 {
 	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().allocationsBuffer.emplace(1, sz);
+		profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(
+			profiler::Global<profiler::bSize>::globalInfo._singleton->allocationID, sz
+		);
 
 	return malloc(sz);
 }
@@ -807,7 +762,9 @@ void operator delete(void* ptr, size_t sz)
 	free(ptr);
 
 	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().allocationsBuffer.emplace(0, sz);
+		profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(
+			profiler::Global<profiler::bSize>::globalInfo._singleton->deallocationID, sz
+		);
 }
 
 /**

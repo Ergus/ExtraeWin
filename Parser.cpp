@@ -25,16 +25,8 @@ public:
 	struct EventEntry {
 		uint64_t _time;
 		uint16_t _id;
-		uint16_t _value;
 		uint16_t _core;
-		uint16_t _thread;
-	};
-
-	struct AllocationEntry {
-		uint64_t _time;
-		uint32_t _size;
-		uint16_t _core;
-		uint16_t _bitset; // TODO: check to use a bitset here
+		uint32_t _value;
 	};
 
 	struct InternalEntry {
@@ -50,18 +42,9 @@ public:
 			, _id(event._id)
 			, _core(event._core)
 			, _value(event._value)
-			, _thread(event._thread)
-		{
-			assert(thread == event._thread);
-		}
-
-		InternalEntry(const AllocationEntry &allocation, uint16_t thread)
-			: _time(allocation._time)
-			, _id(allocation._bitset)
-			, _core(allocation._core)
-			, _value(allocation._size)
 			, _thread(thread)
-		{}
+		{
+		}
 
 		friend std::ostream& operator<<(std::ostream& os, const InternalEntry& in)
 		{
@@ -86,18 +69,31 @@ public:
 
 	TraceFile() = default;
 
-	template<typename TEntry>
-	void readEntries(std::ifstream &file, const TraceHeader &header)
+	explicit TraceFile(const std::filesystem::path &filePath)
 	{
+		std::ifstream file(filePath.string(), std::ios::in | std::ios::binary);
+		if (!file)
+			throw std::runtime_error("Failed to open file: " + filePath.string());
+
+		TraceHeader header;
+		file.read(reinterpret_cast<char *>(&header), sizeof(TraceHeader));
+		if (!file)
+			throw std::runtime_error("Failed to read header in file: " + filePath.string());
+
 		const size_t nentries = header._nentries;
 
-		std::vector<TEntry> tmp(nentries);
+		std::vector<EventEntry> tmp(nentries);
 
+		file.read(reinterpret_cast<char *>(tmp.data()), nentries * sizeof(EventEntry));
+		if (!file)
+			throw std::runtime_error(
+				"Failed to read " + std::to_string(nentries) + " events in file: " + filePath.string()
+			);
+
+		assert(_body.size() == 0);
 		_body.reserve(nentries);
 
-		file.read(reinterpret_cast<char *>(tmp.data()), nentries * sizeof(TEntry));
-
-		for (const TEntry &entry : tmp)
+		for (const EventEntry &entry : tmp)
 		{
 			_body.emplace_back(entry, header._id);
 
@@ -105,25 +101,6 @@ public:
 			_coresList.emplace(it._core);
 			_threadList.emplace(it._thread);
 		}
-	}
-
-	explicit TraceFile(const std::filesystem::path &filePath)
-	{
-		TraceHeader header;
-
-		std::ifstream file(filePath.string(), std::ios::in | std::ios::binary);
-
-		if (!file)
-			throw std::runtime_error("Failed to open file: " + filePath.string());
-
-		file.read(reinterpret_cast<char *>(&header), sizeof(TraceHeader));
-
-		if (filePath.extension() == ".bin")
-			readEntries<EventEntry>(file, header);
-		else if (filePath.extension() == ".bin2")
-			readEntries<AllocationEntry>(file, header);
-		else
-			std::runtime_error("File " +  filePath.string() + " has unknown extension.");
 
 		_startGTime = header._startGTime;
 	}
