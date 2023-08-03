@@ -467,34 +467,8 @@ namespace profiler {
 		   ordinal id for it.  Any optimization here will be very welcome.
 		*/
 		template<typename Tevent>
-		Buffer<I, Tevent> &getThreadBuffer(size_t tid)
-		{
-			std::map<size_t, Buffer<I,Tevent>>& theMap = getBufferMap<Tevent>();
+		Buffer<I, Tevent> &getThreadBuffer(size_t tid);
 
-			// We attempt to tale the read lock first. If this tid was
-			// already used, the buffer must be already created, and we
-			// don't need the exclusive access.
-			std::shared_lock sharedlock(_mapMutex);
-			auto it = theMap.lower_bound(tid);
-
-			if (it != theMap.end() && it->first == tid)
-				return it->second;
-
-			// === else === create new entry: <tid, id>
-			// Else, this is the first time we use this tid, so, we need
-			// exclusive access to modify the map. So, let's release the
-			// read lock and try to take the write (unique) lock.
-			sharedlock.release();
-			_mapMutex.unlock_shared();
-			std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
-
-			const std::string filename
-				= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + std::string(Tevent::suffix);
-
-			it = theMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
-
-			return it->second;
-		}
 
 	private:
 		const uint64_t _startSystemTimePoint;
@@ -534,6 +508,7 @@ namespace profiler {
 	public:
 		std::shared_ptr<BufferSet<I>> globalBufferSet;
 		Buffer<I, EventEntry> &eventsBuffer;
+		Buffer<I, AllocationEntry> &memoryBuffer;
 
 		/**
 		   Thread local Info initialization.
@@ -546,10 +521,8 @@ namespace profiler {
 		*/
 		InfoThread();
 
-		~InfoThread()
-		{
-			eventsBuffer.emplace(globalBufferSet->threadEventID, 0);
-		}
+		~InfoThread();
+
 	}; // InfoThread
 
 	/**
@@ -570,8 +543,6 @@ namespace profiler {
 			return threadInfo;
 		}
 
-		std::shared_ptr<BufferSet<I>> _singleton;
-
 		Global()
 			: _singleton(new BufferSet<I>())
 		{
@@ -583,14 +554,26 @@ namespace profiler {
 			if (getThreadInfo().eventsBuffer.getHeader()._id != 1)
 				throw std::runtime_error("Master is not running in the first thread");
 
+			traceMemory = true;
 		}
 
+		~Global()
+		{
+			traceMemory = false;
+		}
+
+		thread_local static bool traceMemory;
 		static Global globalInfo;
 
+		std::shared_ptr<BufferSet<I>> _singleton;
 	};
 
 	template <size_t I>
 	Global<I> Global<I>::globalInfo;
+
+	template <size_t I>
+	thread_local bool Global<I>::traceMemory(false);
+
 
 	/**
 	   Public function to create new events.
@@ -744,16 +727,74 @@ namespace profiler {
 		std::cout << "# Profiler TraceDir: " << _traceDirectory << std::endl;
 	}
 
+	template <size_t I>
+	template <typename Tevent>
+	Buffer<I, Tevent> &BufferSet<I>::getThreadBuffer(size_t tid)
+	{
+		std::map<size_t, Buffer<I,Tevent>>& theMap = getBufferMap<Tevent>();
+
+		// We attempt to tale the read lock first. If this tid was
+		// already used, the buffer must be already created, and we
+		// don't need the exclusive access.
+		std::shared_lock sharedlock(_mapMutex);
+		auto it = theMap.lower_bound(tid);
+
+		if (it != theMap.end() && it->first == tid)
+			return it->second;
+
+		// === else === create new entry: <tid, id>
+		// Else, this is the first time we use this tid, so, we need
+		// exclusive access to modify the map. So, let's release the
+		// read lock and try to take the write (unique) lock.
+		sharedlock.release();
+		_mapMutex.unlock_shared();
+		std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
+
+		const std::string filename
+			= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + std::string(Tevent::suffix);
+
+		it = theMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
+
+		return it->second;
+	}
+
 
 	template <size_t I>
 	InfoThread<I>::InfoThread()
-		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id())),
-		  globalBufferSet(Global<I>::globalInfo._singleton),
-		  eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
+		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
+		, globalBufferSet(Global<I>::globalInfo._singleton)
+		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
+		, memoryBuffer(globalBufferSet->template getThreadBuffer<AllocationEntry>(_tid))
 	{
 		assert(_tid == eventsBuffer.getHeader()._tid);
 		eventsBuffer.emplace(globalBufferSet->threadEventID, _tid);
+		Global<profiler::bSize>::traceMemory = true;
 	}
+
+	template <size_t I>
+	InfoThread<I>::~InfoThread()
+	{
+		Global<profiler::bSize>::traceMemory = false;
+		eventsBuffer.emplace(globalBufferSet->threadEventID, 0);
+	}
+
+
+} // profiler
+
+void* operator new(size_t sz)
+{
+	if (profiler::Global<profiler::bSize>::traceMemory)
+		profiler::Global<profiler::bSize>::getThreadInfo().memoryBuffer.emplace(1, sz);
+
+	return malloc(sz);
+}
+
+void operator delete(void* ptr, size_t sz)
+{
+	if (profiler::Global<profiler::bSize>::traceMemory)
+		profiler::Global<profiler::bSize>::getThreadInfo().memoryBuffer.emplace(0, sz);
+
+	free(ptr);
 }
 
 /**
