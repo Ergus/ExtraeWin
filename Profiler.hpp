@@ -104,9 +104,9 @@ namespace profiler {
 	// Default buffer size in bytes
 	static constexpr size_t bSize = (1 << 20);
 
-	// ==================================================
+	// =========================================================================
 	// End of the basic functions
-	// ==================================================
+	// =========================================================================
 
 	/**
 	   Event struct that will be reported (and saved into the traces files in binary format)
@@ -189,9 +189,9 @@ namespace profiler {
 
 		} _header;
 
-		std::string _fileName;            //< Name of the binary file with trace information
+		const std::string _fileName;      //< Name of the binary file with trace information
 		std::ofstream _file;		      //< fstream with file open; every write will be appended and binary. >/
-		std::vector<Tevent> _entries; //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
+		std::vector<Tevent> _entries;     //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
 
 		void flushBuffer()
 		{
@@ -222,6 +222,7 @@ namespace profiler {
 		}
 
 	public:
+		// No copy
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
@@ -563,7 +564,7 @@ namespace profiler {
 
 	public:
 
-		static InfoThread<I> getThreadInfo()
+		static InfoThread<I> &getThreadInfo()
 		{
 			thread_local static InfoThread<I> threadInfo;
 			return threadInfo;
@@ -674,7 +675,6 @@ namespace profiler {
 	template <size_t I, typename Tevent>
 	Buffer<I,Tevent>::~Buffer()
 	{
-
 		flushBuffer(); // Flush all remaining events
 		_file.close(); // close the file only at the end.
 	}
