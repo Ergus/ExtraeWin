@@ -108,6 +108,27 @@ namespace profiler {
 	// End of the basic functions
 	// =========================================================================
 
+	template<typename T>
+	class valueGuard
+	{
+		const T _initialValue;
+		T &_valueRef;
+
+	public:
+		explicit valueGuard(T &value, T newValue)
+			: _initialValue(value)
+			, _valueRef(value)
+		{
+			_valueRef = newValue;
+		}
+
+		~valueGuard()
+		{
+			_valueRef = _initialValue;
+		}
+	};
+
+
 	/**
 	   Event struct that will be reported (and saved into the traces files in binary format)
 
@@ -204,7 +225,7 @@ namespace profiler {
 
 		~Buffer();
 
-		void emplace(uint16_t id, uint16_t value)
+		void emplaceEvent(uint16_t id, uint16_t value)
 		{
 			_entries.emplace_back(id, value);
 
@@ -521,6 +542,19 @@ namespace profiler {
 			traceMemory = false;
 		}
 
+		template <bool ALLOC>
+		static void allocate(size_t sz)
+		{
+			if (!traceMemory)
+				return;
+
+			if constexpr (ALLOC)
+				getThreadInfo().eventsBuffer.emplaceEvent(globalInfo._singleton->allocationID, sz);
+			else
+				getThreadInfo().eventsBuffer.emplaceEvent(globalInfo._singleton->deallocationID, sz);
+		}
+
+
 		thread_local static bool traceMemory;
 		static Global globalInfo;
 
@@ -559,6 +593,8 @@ namespace profiler {
 			name = p.filename().u8string()+":"+std::to_string(line);
 		}
 
+		valueGuard(profiler::Global<profiler::bSize>::traceMemory, false);
+
 		if (event == 0)
 			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
 		else if (value == 0)
@@ -595,12 +631,12 @@ namespace profiler {
 			: _id(id)
 		{
 			assert(value != 0);
-			Global<I>::getThreadInfo().eventsBuffer.emplace(_id, value);
+			Global<I>::getThreadInfo().eventsBuffer.emplaceEvent(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			Global<I>::getThreadInfo().eventsBuffer.emplace(_id, 0);
+			Global<I>::getThreadInfo().eventsBuffer.emplaceEvent(_id, 0);
 		}
 
 	}; // ProfilerGuard
@@ -733,7 +769,7 @@ namespace profiler {
 		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
 	{
 		assert(_tid == eventsBuffer.getHeader()._tid);
-		eventsBuffer.emplace(globalBufferSet->threadEventID, 1);
+		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 1);
 		Global<profiler::bSize>::traceMemory = true;
 	}
 
@@ -741,7 +777,7 @@ namespace profiler {
 	InfoThread<I>::~InfoThread()
 	{
 		Global<profiler::bSize>::traceMemory = false;
-		eventsBuffer.emplace(globalBufferSet->threadEventID, 0);
+		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 0);
 	}
 
 
@@ -749,22 +785,14 @@ namespace profiler {
 
 void* operator new(size_t sz)
 {
-	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(
-			profiler::Global<profiler::bSize>::globalInfo._singleton->allocationID, sz
-		);
-
+	profiler::Global<profiler::bSize>::allocate<true>(sz);
 	return malloc(sz);
 }
 
 void operator delete(void* ptr, size_t sz)
 {
 	free(ptr);
-
-	if (profiler::Global<profiler::bSize>::traceMemory)
-		profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(
-			profiler::Global<profiler::bSize>::globalInfo._singleton->deallocationID, sz
-		);
+	profiler::Global<profiler::bSize>::allocate<false>(sz);
 }
 
 /**
@@ -815,7 +843,7 @@ void operator delete(void* ptr, size_t sz)
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplace(__profiler_function_id, CAT(__profiler_function_,__LINE__))
+	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplaceEvent(__profiler_function_id, CAT(__profiler_function_,__LINE__))
 
 //!@}
 
