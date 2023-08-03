@@ -20,7 +20,7 @@
 
 void threadFuncion1(size_t id)
 {
-	INSTRUMENT_FUNCTION;
+	INSTRUMENT_FUNCTION();
 
 	for (size_t i = 0; i < 10; ++i) {
 		INSTRUMENT_SCOPE(10, 1 + i, "LOOP");
@@ -35,7 +35,7 @@ void threadFuncion1(size_t id)
 
 void threadFuncion2(size_t id)
 {
-	INSTRUMENT_FUNCTION;
+	INSTRUMENT_FUNCTION("threadFuncion2Specified");
 
 	INSTRUMENT_FUNCTION_UPDATE(10, "LOOP1");
 	for (size_t i = 0; i < 10; ++i) {
@@ -46,7 +46,6 @@ void threadFuncion2(size_t id)
 		INSTRUMENT_FUNCTION_UPDATE(11);
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-
 }
 
 

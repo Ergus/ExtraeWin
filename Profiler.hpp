@@ -838,9 +838,9 @@ void operator delete(void* ptr, size_t sz)
    calling scope finalizes.
    This is intended to be called immediately after a function starts.
 */
-#define INSTRUMENT_FUNCTION											\
+#define INSTRUMENT_FUNCTION(...)									\
 	static uint16_t __profiler_function_id =						\
-		profiler::registerName(__func__, __FILE__, __LINE__, 0, 0);	\
+		profiler::registerName(std::string(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
 	profiler::ProfilerGuard guard(__profiler_function_id, 1);
 
 /**
