@@ -112,11 +112,13 @@ namespace profiler {
 	class valueGuard
 	{
 		const T _initialValue;
+		const T _settedValue;
 		T &_valueRef;
 
 	public:
 		explicit valueGuard(T &value, T newValue)
 			: _initialValue(value)
+			, _settedValue(newValue)
 			, _valueRef(value)
 		{
 			_valueRef = newValue;
@@ -124,6 +126,7 @@ namespace profiler {
 
 		~valueGuard()
 		{
+			assert(_settedValue == _valueRef);
 			_valueRef = _initialValue;
 		}
 	};
@@ -225,15 +228,7 @@ namespace profiler {
 
 		~Buffer();
 
-		void emplaceEvent(uint16_t id, uint16_t value)
-		{
-			_entries.emplace_back(id, value);
-
-			if (_entries.size() >= _maxEntries)
-				flushBuffer();
-
-			assert(_entries.size() < _maxEntries);
-		}
+		void emplaceEvent(uint16_t id, uint16_t value);
 
 		const TraceHeader &getHeader() const
 		{
@@ -288,90 +283,17 @@ namespace profiler {
 		T registerEventName(
 			const std::string &name, T event,
 			const std::string &fileName, size_t line
-		)
-		{
-			assert(!name.empty());
-
-			if (event > maxUserEvent)
-			{
-				const std::string message
-					= "Cannot register event: '" + name
-					+ "' with id: " + std::to_string(event)
-					+ " user event value limit is: '" + std::to_string(maxUserEvent) + "'";
-				throw std::runtime_error(message);
-			}
-
-			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto it = _namesEventMap.emplace(event, nameEntry{name, fileName, line});
-
-			// If not inserted
-			if (!it.second)
-			{
-				const nameInfo &eventInside = it.first->second;
-
-				const std::string message
-					= "Cannot register event: '" + name
-					+ "' with id: " + std::to_string(event)
-					+ " the id is already taken by: '" + std::string(eventInside) + "'";
-				throw std::runtime_error(message);
-			}
-
-			return event;
-		}
+		);
 
 		T registerValueName(
 			const std::string &name, T event, T value,
 			const std::string &fileName, size_t line
-		)
-		{
-			assert(!name.empty());
-
-			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto itEvent = _namesEventMap.find(event);
-
-			if (itEvent == _namesEventMap.end())
-			{
-				const std::string message
-					= "Cannot register event value: '" + name
-					+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
-					+ " the event ID does not exist.";
-				throw std::runtime_error(message);
-			}
-
-			auto itValue = itEvent->second._namesValuesMap.emplace(value, nameEntry{name, fileName, line});
-			if (!itValue.second)
-			{
-				const std::string message
-					= "Cannot cannot register event value: '" + name
-					+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
-					+ " it is already taken by '" + itValue.first->second.name;
-				throw std::runtime_error(message);
-			}
-
-			return event;
-		}
+		);
 
 		T autoRegisterName(
 			const std::string &name,
 			const std::string &fileName = "profiler", size_t line = 0
-		)
-		{
-			assert(!name.empty());
-			nameEntry entry {
-				name, fileName, line
-			};
-
-			std::lock_guard<std::mutex> lk(_namesMutex);
-			auto it =_namesEventMap.lower_bound(_counter);
-
-			while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
-				// If counter goes to zero there is overflow, so, no empty places.
-				if (_counter == maxEvent)
-					throw std::runtime_error("Profiler cannot register event: " + name);
-			}
-
-			return _counter;
-		}
+		);
 
 		auto begin() const
 		{
@@ -517,7 +439,7 @@ namespace profiler {
 
 	public:
 
-		static InfoThread<I> &getThreadInfo()
+		static InfoThread<I> &getInfoThread()
 		{
 			thread_local static InfoThread<I> threadInfo;
 			return threadInfo;
@@ -531,15 +453,8 @@ namespace profiler {
 			// This is because the thread-local variables are constructed on demand,
 			// but the static are built before main  (eagerly) So we need to do this
 			// to compute the real execution time.
-			if (getThreadInfo().eventsBuffer.getHeader()._id != 1)
+			if (getInfoThread().eventsBuffer.getHeader()._id != 1)
 				throw std::runtime_error("Master is not running in the first thread");
-
-			traceMemory = true;
-		}
-
-		~Global()
-		{
-			traceMemory = false;
 		}
 
 		template <bool ALLOC>
@@ -549,9 +464,9 @@ namespace profiler {
 				return;
 
 			if constexpr (ALLOC)
-				getThreadInfo().eventsBuffer.emplaceEvent(globalInfo._singleton->allocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton->allocationID, sz);
 			else
-				getThreadInfo().eventsBuffer.emplaceEvent(globalInfo._singleton->deallocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton->deallocationID, sz);
 		}
 
 
@@ -560,9 +475,6 @@ namespace profiler {
 
 		std::shared_ptr<BufferSet<I>> _singleton;
 	};
-
-	template <size_t I>
-	Global<I> Global<I>::globalInfo;
 
 	/**
 	   Set the trace memory to false by when thread initialize.
@@ -574,6 +486,10 @@ namespace profiler {
 	 */
 	template <size_t I>
 	thread_local bool Global<I>::traceMemory(false);
+
+
+	template <size_t I>
+	Global<I> Global<I>::globalInfo;
 
 
 	/**
@@ -593,14 +509,15 @@ namespace profiler {
 			name = p.filename().u8string()+":"+std::to_string(line);
 		}
 
-		valueGuard(profiler::Global<profiler::bSize>::traceMemory, false);
+		InfoThread<profiler::bSize> &threadInfo = Global<profiler::bSize>::getInfoThread();
+		valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
 
 		if (event == 0)
-			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
+			return threadInfo.globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
 		else if (value == 0)
-			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
+			return threadInfo.globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
 		else
-			return Global<profiler::bSize>::getThreadInfo().globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
+			return threadInfo.globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
 	}
 
 
@@ -631,12 +548,12 @@ namespace profiler {
 			: _id(id)
 		{
 			assert(value != 0);
-			Global<I>::getThreadInfo().eventsBuffer.emplaceEvent(_id, value);
+			Global<I>::getInfoThread().eventsBuffer.emplaceEvent(_id, value);
 		}
 
 		~ProfilerGuard()
 		{
-			Global<I>::getThreadInfo().eventsBuffer.emplaceEvent(_id, 0);
+			Global<I>::getInfoThread().eventsBuffer.emplaceEvent(_id, 0);
 		}
 
 	}; // ProfilerGuard
@@ -663,6 +580,119 @@ namespace profiler {
 	{
 		flushBuffer(); // Flush all remaining events
 		_file.close(); // close the file only at the end.
+	}
+
+
+	template <size_t I, typename Tevent>
+	void Buffer<I,Tevent>::emplaceEvent(uint16_t id, uint16_t value)
+	{
+		valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
+
+		_entries.emplace_back(id, value);
+
+		if (_entries.size() >= _maxEntries)
+			flushBuffer();
+
+		assert(_entries.size() < _maxEntries);
+	}
+
+	template <typename T>
+	T NameSet<T>::registerEventName(
+		const std::string &name, T event,
+		const std::string &fileName, size_t line
+	)
+	{
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(!name.empty());
+
+		if (event > maxUserEvent)
+		{
+			const std::string message
+				= "Cannot register event: '" + name
+				+ "' with id: " + std::to_string(event)
+				+ " user event value limit is: '" + std::to_string(maxUserEvent) + "'";
+			throw std::runtime_error(message);
+		}
+
+		std::lock_guard<std::mutex> lk(_namesMutex);
+		auto it = _namesEventMap.emplace(event, nameEntry{name, fileName, line});
+
+		// If not inserted
+		if (!it.second)
+		{
+			const nameInfo &eventInside = it.first->second;
+
+			const std::string message
+				= "Cannot register event: '" + name
+				+ "' with id: " + std::to_string(event)
+				+ " the id is already taken by: '" + std::string(eventInside) + "'";
+			throw std::runtime_error(message);
+		}
+
+		return event;
+	}
+
+	template <typename T>
+	T NameSet<T>::registerValueName(
+		const std::string &name, T event, T value,
+		const std::string &fileName, size_t line
+	)
+	{
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(!name.empty());
+
+		std::lock_guard<std::mutex> lk(_namesMutex);
+		auto itEvent = _namesEventMap.find(event);
+
+		if (itEvent == _namesEventMap.end())
+		{
+			const std::string message
+				= "Cannot register event value: '" + name
+				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
+				+ " the event ID does not exist.";
+			throw std::runtime_error(message);
+		}
+
+		auto itValue = itEvent->second._namesValuesMap.emplace(value, nameEntry{name, fileName, line});
+		if (!itValue.second)
+		{
+			const std::string message
+				= "Cannot cannot register event value: '" + name
+				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
+				+ " it is already taken by '" + itValue.first->second.name;
+			throw std::runtime_error(message);
+		}
+
+		return event;
+	}
+
+
+	template <typename T>
+	T NameSet<T>::autoRegisterName(
+		const std::string &name, const std::string &fileName, size_t line
+	)
+	{
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+
+		assert(!name.empty());
+		nameEntry entry {name, fileName, line};
+
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+
+		std::lock_guard<std::mutex> lk(_namesMutex);
+		auto it =_namesEventMap.lower_bound(_counter);
+
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+
+		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
+			// If counter goes to zero there is overflow, so, no empty places.
+			if (_counter == maxEvent)
+				throw std::runtime_error("Profiler cannot register event: " + name);
+		}
+
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+
+		return _counter;
 	}
 
 
@@ -770,13 +800,13 @@ namespace profiler {
 	{
 		assert(_tid == eventsBuffer.getHeader()._tid);
 		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 1);
-		Global<profiler::bSize>::traceMemory = true;
+		profiler::Global<profiler::bSize>::traceMemory = true;
 	}
 
 	template <size_t I>
 	InfoThread<I>::~InfoThread()
 	{
-		Global<profiler::bSize>::traceMemory = false;
+		profiler::Global<profiler::bSize>::traceMemory = false;
 		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 0);
 	}
 
@@ -843,7 +873,7 @@ void operator delete(void* ptr, size_t sz)
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<profiler::bSize>::getThreadInfo().eventsBuffer.emplaceEvent(__profiler_function_id, CAT(__profiler_function_,__LINE__))
+	profiler::Global<profiler::bSize>::getInfoThread().eventsBuffer.emplaceEvent(__profiler_function_id, CAT(__profiler_function_,__LINE__))
 
 //!@}
 
