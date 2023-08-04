@@ -17,15 +17,21 @@
 
 
 #include "Profiler.hpp"
+#include <vector>
 
 void threadFuncion1(size_t id)
 {
 	INSTRUMENT_FUNCTION();
 
+	std::vector<double> v1(1);
+
 	for (size_t i = 0; i < 10; ++i) {
 		INSTRUMENT_SCOPE(10, 1 + i, "LOOP");
+		v1.resize(v1.size() * 2);
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
+
+	v1.clear();
 
 	for (size_t i = 0; i < 10; ++i) {
 		INSTRUMENT_SCOPE(11, 1 + i);
@@ -56,12 +62,16 @@ int main()
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	std::vector<std::thread> threadVector;
 
+	std::vector<double> tmp(100);
+
 	for (size_t i = 0; i < 10; ++i) {
 		threadVector.emplace_back(threadFuncion1, i);
 	}
 
 	for(auto& t: threadVector)
 		t.join();
+
+	tmp.resize(10);
 
 	std::cout << "Sleep" << std::endl;
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
