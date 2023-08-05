@@ -185,7 +185,7 @@ namespace profiler {
 				: _id(id), _totalFlushed(0), _tid(tid), _startGTime(startGTime)
 			{}
 
-		} _header;
+		};
 
 		const std::string _fileName;      //< Name of the binary file with trace information
 		std::ofstream _file;		      //< fstream with file open; every write will be appended and binary. >/
@@ -230,10 +230,8 @@ namespace profiler {
 
 		void emplaceEvent(uint16_t id, uint16_t value);
 
-		const TraceHeader &getHeader() const
-		{
-			return _header;
-		}
+		TraceHeader _header;
+
 	}; // Buffer
 
 	/**
@@ -454,7 +452,7 @@ namespace profiler {
 			// This is because the thread-local variables are constructed on demand,
 			// but the static are built before main  (eagerly) So we need to do this
 			// to compute the real execution time.
-			if (getInfoThread().eventsBuffer.getHeader()._id != 1)
+			if (getInfoThread().eventsBuffer._header._id != 1)
 				throw std::runtime_error("Master is not running in the first thread");
 
 			profiler::Global<profiler::bSize>::traceMemory = true;
@@ -576,9 +574,9 @@ namespace profiler {
 	Buffer<I,Tevent>::Buffer(
 		uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime
 	)
-		: _header(id, tid, startGTime),
-		  _fileName(std::move(fileName)),
-		  _entries()
+		: _fileName(std::move(fileName))
+		, _entries()
+		, _header(id, tid, startGTime)
 	{
 		// Reserve memory for the buffer.
 		_entries.reserve(_maxEntries);
@@ -802,7 +800,7 @@ namespace profiler {
 		, globalBufferSet(Global<I>::globalInfo._singleton)
 		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
 	{
-		assert(_tid == eventsBuffer.getHeader()._tid);
+		assert(_tid == eventsBuffer._header._tid);
 		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 1);
 	}
 
@@ -867,7 +865,7 @@ void operator delete(void* ptr, size_t sz)
 #define INSTRUMENT_FUNCTION(...)										\
 	profiler::Global<profiler::bSize>::traceMemory = false;				\
 	static uint16_t __profiler_function_id =							\
-		profiler::registerName(std::string(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
+		profiler::registerName(std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
 	profiler::ProfilerGuard guard(__profiler_function_id, 1);			\
 	profiler::Global<profiler::bSize>::traceMemory = true;
 
@@ -881,7 +879,7 @@ void operator delete(void* ptr, size_t sz)
 */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	profiler::Global<profiler::bSize>::traceMemory = false;				\
-	static uint16_t CAT(__profiler_function_,__LINE__) = \
+	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
 	profiler::Global<profiler::bSize>::getInfoThread().eventsBuffer.emplaceEvent(\
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
