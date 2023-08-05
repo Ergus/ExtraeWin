@@ -293,14 +293,33 @@ namespace profiler {
 			const std::string &fileName = "profiler", size_t line = 0
 		);
 
-		auto begin() const
+		void createPCF(const std::string &traceDirectory) const
 		{
-			return _namesEventMap.begin();
-		}
+			// PCF File
+			std::ofstream pcffile(traceDirectory + "/Trace.pcf", std::ios::out);
 
-		auto end() const
-		{
-			return _namesEventMap.end();
+			// Register all Events types names.
+			for (auto it : _namesEventMap)
+			{
+				const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
+
+				pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
+				pcffile << "EVENT_TYPE" << std::endl;
+				pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
+
+				// Create a "VALUES" sections if some value is registered for this event
+				if (!eventEntry._namesValuesMap.empty())
+				{
+					pcffile << "VALUES" << std::endl;
+					for (auto itValues : eventEntry._namesValuesMap)
+						pcffile << itValues.first << " "
+						        << eventEntry.name << ":" << itValues.second.name << std::endl;
+				}
+
+				pcffile << std::endl;
+
+			}
+			pcffile.close();
 		}
 
 	private:
@@ -736,30 +755,7 @@ namespace profiler {
 		rowfile.close();
 
 		// PCF File
-		std::ofstream pcffile(_traceDirectory + "/Trace.pcf", std::ios::out);
-
-		// Register all Events types names.
-		for (auto it : eventsNames)
-		{
-			const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
-
-			pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
-			pcffile << "EVENT_TYPE" << std::endl;
-			pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
-
-			// Create a "VALUES" sections if some value is registered for this event
-			if (!eventEntry._namesValuesMap.empty())
-			{
-				pcffile << "VALUES" << std::endl;
-				for (auto itValues : eventEntry._namesValuesMap)
-					pcffile << itValues.first << " "
-					        << eventEntry.name << ":" << itValues.second.name << std::endl;
-			}
-
-			pcffile << std::endl;
-
-		}
-		pcffile.close();
+		eventsNames.createPCF(_traceDirectory);
 
 		std::cout << "# Profiler TraceDir: " << _traceDirectory << std::endl;
 	}
