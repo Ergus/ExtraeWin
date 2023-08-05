@@ -349,14 +349,17 @@ namespace profiler {
 		/**
 		   Static utility function to build the trace directory
 		*/
-		static std::string getTraceDirectory(uint64_t systemTimePoint)
-		{
-			const time_t localTime = static_cast<time_t>(systemTimePoint);
+		static std::string getTraceDirectory(uint64_t systemTimePoint);
 
-			std::stringstream ss;
-			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
-			return ss.str();
-		}
+		const uint64_t _startSystemTimePoint;
+		const std::string _traceDirectory;
+
+		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
+		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
+
+		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
+
+		friend uint16_t registerName(const std::string &name, uint16_t value);
 
 	public:
 
@@ -385,22 +388,8 @@ namespace profiler {
 		   the new entry in the map, construct the Buffer and assign an
 		   ordinal id for it.  Any optimization here will be very welcome.
 		*/
-		template<typename Tevent>
-		Buffer<I, Tevent> &getThreadBuffer(size_t tid);
+		Buffer<I, EventEntry> &getThreadBuffer(size_t tid);
 
-
-	private:
-		const uint64_t _startSystemTimePoint;
-		const std::string _traceDirectory;
-
-		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
-
-		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
-
-		friend uint16_t registerName(const std::string &name, uint16_t value);
-
-	public:
 		// Events names register
 		NameSet<uint16_t> eventsNames;
 
@@ -589,6 +578,7 @@ namespace profiler {
 	// Outline function definitions.
 	// ==================================================
 
+	// =================== Buffer ==============================================
 	template <size_t I, typename Tevent>
 	Buffer<I,Tevent>::Buffer(
 		uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime
@@ -623,6 +613,8 @@ namespace profiler {
 		assert(_entries.size() < _maxEntries);
 	}
 
+
+	// =================== NameSet =============================================
 	template <typename T>
 	T NameSet<T>::registerEventName(
 		const std::string &name, T event,
@@ -716,10 +708,10 @@ namespace profiler {
 		return _counter;
 	}
 
-
+	// =================== BufferSet ===========================================
 	template <size_t I>
-	BufferSet<I>::BufferSet():
-		_startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
+	BufferSet<I>::BufferSet()
+		: _startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
 		, _traceDirectory(getTraceDirectory(_startSystemTimePoint))
 		, eventsNames()
 		, threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
@@ -761,8 +753,7 @@ namespace profiler {
 	}
 
 	template <size_t I>
-	template <typename Tevent>
-	Buffer<I, Tevent> &BufferSet<I>::getThreadBuffer(size_t tid)
+	Buffer<I, EventEntry> &BufferSet<I>::getThreadBuffer(size_t tid)
 	{
 		// We attempt to tale the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
@@ -791,10 +782,23 @@ namespace profiler {
 
 
 	template <size_t I>
+	std::string BufferSet<I>::getTraceDirectory(uint64_t systemTimePoint)
+	{
+		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		const time_t localTime = static_cast<time_t>(systemTimePoint);
+
+		std::stringstream ss;
+		ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
+		return ss.str();
+	}
+
+
+	// =================== InfoThread ==========================================
+	template <size_t I>
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
-		, eventsBuffer(globalBufferSet->template getThreadBuffer<EventEntry>(_tid))
+		, eventsBuffer(globalBufferSet->getThreadBuffer(_tid))
 	{
 		assert(_tid == eventsBuffer._header._tid);
 		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 1);
