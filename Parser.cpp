@@ -81,13 +81,15 @@ public:
 			throw std::runtime_error("Failed to read header in file: " + filePath.string());
 
 		const size_t nentries = header._nentries;
+		std::cout << " -> "  << nentries
+		          << " events (" <<  nentries * sizeof(EventEntry) << " bytes)" << std::endl;
 
 		std::vector<EventEntry> tmp(nentries);
 
 		file.read(reinterpret_cast<char *>(tmp.data()), nentries * sizeof(EventEntry));
 		if (!file)
 			throw std::runtime_error(
-				"Failed to read " + std::to_string(nentries) + " events in file: " + filePath.string()
+				"Failed to read events in file: " + filePath.string()
 			);
 
 		assert(_body.size() == 0);
