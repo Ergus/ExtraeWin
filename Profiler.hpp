@@ -178,7 +178,8 @@ namespace profiler {
 	template <size_t I, typename Tevent>
 	class Buffer {
 
-		static constexpr size_t _maxEntries = ( I + sizeof(Tevent) - 1 ) / sizeof(Tevent);	 //< Maximum size for the buffers ~ 1Mb >/
+		/** Maximum size for the buffers = 1Mb */
+		static constexpr size_t _maxEntries = ( I + sizeof(Tevent) - 1 ) / sizeof(Tevent);
 
 		/**
 		   Header struct
@@ -607,7 +608,9 @@ namespace profiler {
 
 		_entries.emplace_back(id, value);
 
-		if (_entries.size() >= _maxEntries)
+		assert(_entries.size() <= _maxEntries);
+
+		if (_entries.size() == _maxEntries)
 			flushBuffer();
 
 		assert(_entries.size() < _maxEntries);
