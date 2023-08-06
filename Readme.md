@@ -58,6 +58,6 @@ must be in the range: 1-65535.
 - 1 - 32767 User events manually defined, the user can use any of them.
 - 32768 - 65536 Are reserved for auto-registered functions and internal
   At the moment there are only 3 predefined events values:
-	  * 32768 Thread status
-	  * 32769 Memory allocations
-	  * 32770 Memory deallocation
+	  - 32768 Thread status
+	  - 32769 Memory allocations
+	  - 32770 Memory deallocation
