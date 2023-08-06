@@ -131,6 +131,18 @@ namespace profiler {
 		}
 	};
 
+	class profiler_error : public std::exception {
+		const std::string message;
+    public:
+		explicit profiler_error(const std::string &msg)
+			: message("Profiler error: " + msg) {}
+
+		const char *what () const throw ()
+		{
+			return message.c_str();
+		}
+	};
+
 
 	/**
 	   Event struct that will be reported (and saved into the traces files in binary format)
@@ -457,7 +469,7 @@ namespace profiler {
 			// but the static are built before main  (eagerly) So we need to do this
 			// to compute the real execution time.
 			if (getInfoThread().eventsBuffer._header._id != 1)
-				throw std::runtime_error("Master is not running in the first thread");
+				throw profiler_error("Master is not running in the first thread");
 
 			profiler::Global<profiler::bSize>::traceMemory = true;
 		}
@@ -636,13 +648,13 @@ namespace profiler {
 				= "Cannot register event: '" + eventName
 				+ "' with id: " + std::to_string(event)
 				+ " the id is already taken by: '" + std::string(eventInside) + "'";
-			throw std::runtime_error(message);
+			throw profiler_error(message);
 		}
 
 		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
 			// If counter goes to zero there is overflow, so, no empty places.
 			if (_counter == maxEvent)
-				throw std::runtime_error("Profiler cannot register event: " + eventName);
+				throw profiler_error("Profiler cannot register event: " + eventName);
 		}
 
 		return eventRef;
@@ -672,7 +684,7 @@ namespace profiler {
 				= "Cannot register event value: '" + valueName
 				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 				+ " the event ID does not exist.";
-			throw std::runtime_error(message);
+			throw profiler_error(message);
 		}
 
 		nameEntry entry{valueName, fileName, line};
@@ -686,7 +698,7 @@ namespace profiler {
 			= "Cannot cannot register event value: '" + valueName
 			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 			+ " it is already taken by '" + itValue.first->second.name;
-		throw std::runtime_error(message);
+		throw profiler_error(message);
 	}
 
 	// =================== BufferSet ===========================================
@@ -701,7 +713,7 @@ namespace profiler {
 	{
 		// Create the directory
 		if (!std::filesystem::create_directory(_traceDirectory))
-			throw std::runtime_error("Cannot create traces directory: " + _traceDirectory);
+			throw profiler_error("Cannot create traces directory: " + _traceDirectory);
 	}
 
 
