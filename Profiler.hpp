@@ -286,7 +286,7 @@ namespace profiler {
 		);
 
 		T registerValueName(
-			std::string name, const std::string &fileName, size_t line, T event, T value
+			std::string name, const std::string &fileName, size_t line, T event, uint32_t value
 		);
 
 		void createPCF(const std::string &traceDirectory) const
@@ -652,7 +652,7 @@ namespace profiler {
 
 	template <typename T>
 	T NameSet<T>::registerValueName(
-		std::string valueName, const std::string &fileName, size_t line, T event, T value
+		std::string valueName, const std::string &fileName, size_t line, T event, uint32_t value
 	)
 	{
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
@@ -675,8 +675,8 @@ namespace profiler {
 			throw std::runtime_error(message);
 		}
 
-		auto itValue
-			= itEvent->second._namesValuesMap.emplace(value, nameEntry{valueName, fileName, line});
+		nameEntry entry{valueName, fileName, line};
+		auto itValue = itEvent->second._namesValuesMap.emplace(value, entry);
 
 		// Insertion succeeded, we can return
 		if (itValue.second)
