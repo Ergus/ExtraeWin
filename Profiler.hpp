@@ -279,18 +279,14 @@ namespace profiler {
 		};
 
 		T registerEventName(
-			const std::string &name, T event,
-			const std::string &fileName, size_t line
+			std::string name,
+			const std::string &fileName = "profiler",
+			size_t line = 0,
+			T event = T()
 		);
 
 		T registerValueName(
-			const std::string &name, T event, T value,
-			const std::string &fileName, size_t line
-		);
-
-		T autoRegisterName(
-			const std::string &name,
-			const std::string &fileName = "profiler", size_t line = 0
+			std::string name, const std::string &fileName, size_t line, T event, T value
 		);
 
 		void createPCF(const std::string &traceDirectory) const
@@ -508,18 +504,12 @@ namespace profiler {
 	   This registers a new pair eventName -> value wrapping Object oriented calls.
 	*/
 	inline uint16_t registerName(
-		std::string name,
+		const std::string &name,
 		const std::string &fileName, size_t line,
 		uint16_t event, uint16_t value
 	)
 	{
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
-
-		if (name.empty())
-		{
-			std::filesystem::path p(fileName);
-			name = p.filename().u8string()+":"+std::to_string(line);
-		}
 
 		// This call can set the traceMemory to true (the first time it is
 		// called in a different thread), that;s why we need the guard latter
@@ -527,12 +517,10 @@ namespace profiler {
 
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
-		if (event == 0)
-			return threadInfo.globalBufferSet->eventsNames.autoRegisterName(name, fileName, line);
-		else if (value == 0)
-			return threadInfo.globalBufferSet->eventsNames.registerEventName(name, event, fileName, line);
+		if (value == 0)
+			return threadInfo.globalBufferSet->eventsNames.registerEventName(name, fileName, line, event);
 		else
-			return threadInfo.globalBufferSet->eventsNames.registerValueName(name, event, value, fileName, line);
+			return threadInfo.globalBufferSet->eventsNames.registerValueName(name, fileName, line, event, value);
 	}
 
 
@@ -617,48 +605,63 @@ namespace profiler {
 	// =================== NameSet =============================================
 	template <typename T>
 	T NameSet<T>::registerEventName(
-		const std::string &name, T event,
-		const std::string &fileName, size_t line
+		std::string eventName, const std::string &fileName, size_t line, T event
 	)
 	{
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
-		assert(!name.empty());
 
-		if (event > maxUserEvent)
+		if (eventName.empty())
 		{
-			const std::string message
-				= "Cannot register event: '" + name
-				+ "' with id: " + std::to_string(event)
-				+ " user event value limit is: '" + std::to_string(maxUserEvent) + "'";
-			throw std::runtime_error(message);
+			std::filesystem::path p(fileName);
+			eventName = p.filename().u8string()+":"+std::to_string(line);
 		}
 
-		std::lock_guard<std::mutex> lk(_namesMutex);
-		auto it = _namesEventMap.emplace(event, nameEntry{name, fileName, line});
+		nameEntry entry {eventName, fileName, line};
 
-		// If not inserted
-		if (!it.second)
-		{
-			const nameInfo &eventInside = it.first->second;
+		T &eventRef = (event == T() ? ++_counter : event);
+
+		std::lock_guard<std::mutex> lk(_namesMutex);
+		auto it_pair = _namesEventMap.emplace(eventRef, entry);
+
+		if (it_pair.second == true)
+			return eventRef;
+
+		typename std::map<T, nameEntry>::iterator it = it_pair.first;
+
+		// When the event number was specified we fail if the insertion failed
+		if (event != T()) {
+			const nameInfo &eventInside = it->second;
 
 			const std::string message
-				= "Cannot register event: '" + name
+				= "Cannot register event: '" + eventName
 				+ "' with id: " + std::to_string(event)
 				+ " the id is already taken by: '" + std::string(eventInside) + "'";
 			throw std::runtime_error(message);
 		}
 
-		return event;
+		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
+			// If counter goes to zero there is overflow, so, no empty places.
+			if (_counter == maxEvent)
+				throw std::runtime_error("Profiler cannot register event: " + eventName);
+		}
+
+		return eventRef;
 	}
+
+
 
 	template <typename T>
 	T NameSet<T>::registerValueName(
-		const std::string &name, T event, T value,
-		const std::string &fileName, size_t line
+		std::string valueName, const std::string &fileName, size_t line, T event, T value
 	)
 	{
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
-		assert(!name.empty());
+
+		if (valueName.empty())
+		{
+			std::filesystem::path p(fileName);
+			valueName = p.filename().u8string()+":"+std::to_string(line);
+		}
 
 		std::lock_guard<std::mutex> lk(_namesMutex);
 		auto itEvent = _namesEventMap.find(event);
@@ -666,46 +669,24 @@ namespace profiler {
 		if (itEvent == _namesEventMap.end())
 		{
 			const std::string message
-				= "Cannot register event value: '" + name
+				= "Cannot register event value: '" + valueName
 				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 				+ " the event ID does not exist.";
 			throw std::runtime_error(message);
 		}
 
-		auto itValue = itEvent->second._namesValuesMap.emplace(value, nameEntry{name, fileName, line});
-		if (!itValue.second)
-		{
-			const std::string message
-				= "Cannot cannot register event value: '" + name
-				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
-				+ " it is already taken by '" + itValue.first->second.name;
-			throw std::runtime_error(message);
-		}
+		auto itValue
+			= itEvent->second._namesValuesMap.emplace(value, nameEntry{valueName, fileName, line});
 
-		return event;
-	}
+		// Insertion succeeded, we can return
+		if (itValue.second)
+			return event;
 
-
-	template <typename T>
-	T NameSet<T>::autoRegisterName(
-		const std::string &name, const std::string &fileName, size_t line
-	)
-	{
-		assert(profiler::Global<profiler::bSize>::traceMemory == false);
-
-		assert(!name.empty());
-		nameEntry entry {name, fileName, line};
-
-		std::lock_guard<std::mutex> lk(_namesMutex);
-		auto it =_namesEventMap.lower_bound(_counter);
-
-		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
-			// If counter goes to zero there is overflow, so, no empty places.
-			if (_counter == maxEvent)
-				throw std::runtime_error("Profiler cannot register event: " + name);
-		}
-
-		return _counter;
+		const std::string message
+			= "Cannot cannot register event value: '" + valueName
+			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
+			+ " it is already taken by '" + itValue.first->second.name;
+		throw std::runtime_error(message);
 	}
 
 	// =================== BufferSet ===========================================
@@ -714,9 +695,9 @@ namespace profiler {
 		: _startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
 		, _traceDirectory(getTraceDirectory(_startSystemTimePoint))
 		, eventsNames()
-		, threadEventID(eventsNames.autoRegisterName("ThreadRunning"))
-		, allocationID(eventsNames.autoRegisterName("allocation"))
-		, deallocationID(eventsNames.autoRegisterName("deallocation"))
+		, threadEventID(eventsNames.registerEventName("ThreadRunning"))
+		, allocationID(eventsNames.registerEventName("allocation"))
+		, deallocationID(eventsNames.registerEventName("deallocation"))
 	{
 		// Create the directory
 		if (!std::filesystem::create_directory(_traceDirectory))
