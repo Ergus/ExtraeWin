@@ -74,7 +74,7 @@ namespace profiler {
 		return cpu + 1;
 	}
 
-	std::string getHostName()
+	inline std::string getHostName()
 	{
 		constexpr size_t  len = 128;
 		char  infoBuf[len];
@@ -224,7 +224,7 @@ namespace profiler {
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
-		Buffer(uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime);
+		Buffer(uint16_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime);
 
 		~Buffer();
 
@@ -513,13 +513,13 @@ namespace profiler {
 		uint16_t event, uint16_t value
 	)
 	{
+		assert (profiler::Global<profiler::bSize>::traceMemory == false);
+
 		if (name.empty())
 		{
 			std::filesystem::path p(fileName);
 			name = p.filename().u8string()+":"+std::to_string(line);
 		}
-
-		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
 		// This call can set the traceMemory to true (the first time it is
 		// called in a different thread), that;s why we need the guard latter
@@ -581,9 +581,9 @@ namespace profiler {
 	// =================== Buffer ==============================================
 	template <size_t I, typename Tevent>
 	Buffer<I,Tevent>::Buffer(
-		uint16_t id, uint64_t tid, std::string fileName, uint64_t startGTime
+		uint16_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
 	)
-		: _fileName(std::move(fileName))
+		: _fileName(fileName)
 		, _entries()
 		, _header(id, tid, startGTime)
 	{
@@ -727,9 +727,9 @@ namespace profiler {
 	template <size_t I>
 	BufferSet<I>::~BufferSet()
 	{
-		std::string hostname = getHostName();
-		int ncores = getNumberOfCores();
-		size_t nthreads = _tcounter - 1;
+		const std::string hostname = getHostName();
+		const int ncores = getNumberOfCores();
+		const size_t nthreads = _tcounter - 1;
 
 		// ROW File
 		std::ofstream rowfile(_traceDirectory + "/Trace.row", std::ios::out);
