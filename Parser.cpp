@@ -172,8 +172,7 @@ public:
 
 		for (const auto &file : std::filesystem::directory_iterator(dirPath))
 		{
-			if (file.path().extension() != ".bin"
-			    && file.path().extension() != ".bin2")
+			if (file.path().extension() != ".bin")
 				continue;
 
 			std::cout << "Processing trace file: " << file.path() << std::endl;
