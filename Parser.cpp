@@ -194,7 +194,6 @@ public:
 
 int main(int argc, char **argv)
 {
-
 	if (argc < 2)
 		throw std::runtime_error(
 			"Wrong argument. Usage: ./" + std::string(argv[0]) + " trace_directory"

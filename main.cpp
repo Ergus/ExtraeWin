@@ -59,15 +59,6 @@ void threadFuncion2(size_t id)
 	}
 }
 
-size_t thread_function_3(size_t in)
-{
-	INSTRUMENT_FUNCTION();
-	std::this_thread::sleep_for(std::chrono::milliseconds(50));
-	return in * in;
-}
-
-
-
 int main()
 {
 	std::cout << "Enter Main" << std::endl;
@@ -83,9 +74,9 @@ int main()
 	for(auto& t: threadVector)
 		t.join();
 
-	tmp.resize(10);
+	tmp.resize(10); // Used to get memory trace information
 
-	std::cout << "Sleep" << std::endl;
+	std::cout << "Sleep Main" << std::endl;
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	std::cout << "Wake Up" << std::endl;
 
@@ -106,9 +97,7 @@ int main()
 	               in.cbegin(), in.cend(), out.begin(),
 	               [](size_t in) -> size_t
 	               {
-					   INSTRUMENT_FUNCTION();
-					   std::thread::id this_id = std::this_thread::get_id();
-					   std::cout << "std::transform thread " << this_id << "\n";
+					   INSTRUMENT_FUNCTION("Parallel_Lambda");
 					   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 					   return in * in;
 				   }

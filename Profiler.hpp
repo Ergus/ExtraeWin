@@ -495,8 +495,8 @@ namespace profiler {
 
 		~Global()
 		{
-			std::cout << "Release global" << _singleton.use_count() << std::endl;
-			kill_pool(); // kills the thread pool when needed.
+			if (_singleton.use_count() > 1)
+				kill_pool(); // kills the thread pool when needed.
 		}
 
 		template <bool ALLOC>
