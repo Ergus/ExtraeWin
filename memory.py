@@ -1,6 +1,5 @@
 import sys
 
-
 def main(argv):
     if len(argv) == 1:
         sys.exit(f"Usage ./{argv[0]} Tracefile.prv")
@@ -26,4 +25,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main(sys.argv)

@@ -836,13 +836,13 @@ namespace profiler {
 
 } // profiler
 
-void* operator new(size_t sz)
+inline void* operator new(size_t sz)
 {
 	profiler::Global<profiler::bSize>::allocate<true>(sz);
 	return malloc(sz);
 }
 
-void operator delete(void* ptr, size_t sz)
+inline void operator delete(void* ptr, size_t sz)
 {
 	free(ptr);
 	profiler::Global<profiler::bSize>::allocate<false>(sz);
