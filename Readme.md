@@ -6,13 +6,28 @@ intended to work in multi-threaded systems (not intended for
 distributed memory systems). For more advanced use cases consider
 using [Extrae](https://tools.bsc.es/extrae) instead of this.
 
-
 The main goal is to make it portable into MSWindows and GNU/Linux
 systems with a very minimal implementation and support for
 multi-threading. Basically because that's what I need ATM.
 
 Everything in a single header to include without requiring extra
 shared/dynamic libraries.
+
+Unlike sampler profiler this is an instrumentation profiler intended
+to work minimizing the overhead and execution perturbation, and
+providing more accurate numbers for system call counters.
+
+Limitations
+-----------
+
+- As this is intended to be multiplatform it is not possible to use
+function interception in a portable way.
+
+- Due to the nature of the implementation sometimes the trace files
+  may become too big; causing some issues with the resulting sizes.
+
+- It is intended to work only with C++ because it relies on RAII and
+  static thread local storage constructors and destructors.
 
 The basic steps are:
 --------------------

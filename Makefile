@@ -3,7 +3,7 @@ MAIN:=main.x Parser.x
 
 all: $(MAIN)
 
-CXXFLAGS += -Wall -DPROFILER_ENABLED -ggdb
+CXXFLAGS += -Wall -DPROFILER_ENABLED=2 -ggdb
 
 main.x: Profiler.hpp
 
