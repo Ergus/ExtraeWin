@@ -61,3 +61,25 @@ must be in the range: 1-65535.
 	  * 32768 Thread status
 	  * 32769 Memory allocations
 	  * 32770 Memory deallocation
+
+Trace example
+-------------
+
+The Profiler generates the traces in binary format. With a very simple
+format it is very easy to generate files for visualizer or data
+analyzers.
+
+The profiler generates one trace file / thread and main is generally
+in thread 0. For more details about how to parse a trace you can read
+the code in `Parser.cpp`.
+
+For the example provided in the `main.cpp` the paraver trace looks like:
+
+![ParaverTrace](images/New_window_#1@Trace.png)
+
+Paraver y capable to perform some simple data analysis like generate
+histograms.
+
+![ParaverTrace](images/New_Histogram_#1@Trace.png)
+
+![ParaverTrace](images/New_Histogram_#2@Trace.png)
