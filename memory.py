@@ -1,10 +1,13 @@
 import sys
+import matplotlib.pyplot as plt
 
 def main(argv):
     if len(argv) == 1:
         sys.exit(f"Usage ./{argv[0]} Tracefile.prv")
 
     cum = 0
+    arrayX = []
+    arrayY = []
 
     with open(argv[1], "r") as inputfile:
         for line in inputfile:
@@ -21,7 +24,18 @@ def main(argv):
                     diff = -int(sline[7])
 
                 cum += diff
+                arrayX.append(int(sline[5]))
+                arrayY.append(cum/1024)
                 print(f"{sline[5]},{diff},{cum}")
+
+    fig, ax = plt.subplots()
+    ax.step(arrayX, arrayY)
+    ax.set(xlabel='Time (nS)', ylabel='Memory (Mb)',
+           title='Memory usage')
+    ax.grid()
+
+    fig.savefig("memory.png")
+    plt.show()
 
 
 if __name__ == "__main__":
