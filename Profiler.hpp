@@ -16,6 +16,13 @@
 #include <map>
 #include <shared_mutex>
 
+#ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
+// When tbb is installed the compiler with try to use it as a backend for std::execution
+// We need this extra code because the std::execution creates a thread pool that for
+// some reason does not call the thread local destructors.
+#include <oneapi/tbb/global_control.h>
+#endif
+
 namespace profiler {
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
@@ -56,7 +63,7 @@ namespace profiler {
 		return infoBuf;
 	}
 
-#else
+#else // ON Linux
 
 #include <unistd.h>
 
@@ -84,6 +91,17 @@ namespace profiler {
 
 		return infoBuf;
 	}
+
+	  // function to kill tbb thread-pool on linux.
+	  void kill_pool()
+	  {
+		  // In principle this works with clang and gcc... still need to check intel compiler
+          #if defined(_PSTL_PAR_BACKEND_TBB)
+		  oneapi::tbb::task_scheduler_handle handle
+		   	  = oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
+		  oneapi::tbb::finalize(handle);
+		  #endif
+	  }
 
 #endif
 
@@ -473,6 +491,12 @@ namespace profiler {
 				throw profiler_error("Master is not running in the first thread");
 
 			profiler::Global<profiler::bSize>::traceMemory = true;
+		}
+
+		~Global()
+		{
+			std::cout << "Release global" << _singleton.use_count() << std::endl;
+			kill_pool(); // kills the thread pool when needed.
 		}
 
 		template <bool ALLOC>

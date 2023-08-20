@@ -18,6 +18,11 @@
 
 #include "Profiler.hpp"
 #include <vector>
+#include <numeric>
+#include <algorithm>
+#include <thread>
+#include <execution>
+#include <iostream>
 
 void threadFuncion1(size_t id)
 {
@@ -54,6 +59,13 @@ void threadFuncion2(size_t id)
 	}
 }
 
+size_t thread_function_3(size_t in)
+{
+	INSTRUMENT_FUNCTION();
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	return in * in;
+}
+
 
 
 int main()
@@ -85,6 +97,22 @@ int main()
 	for(auto& t: threadVector)
 		t.join();
 
+	// Try to use the other way to parallelize
+	std::vector<size_t> in(20);
+	std::iota(in.begin(), in.end(), 0);
+
+	std::vector<size_t> out(20);
+	std::transform(std::execution::par,
+	               in.cbegin(), in.cend(), out.begin(),
+	               [](size_t in) -> size_t
+	               {
+					   INSTRUMENT_FUNCTION();
+					   std::thread::id this_id = std::this_thread::get_id();
+					   std::cout << "std::transform thread " << this_id << "\n";
+					   std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					   return in * in;
+				   }
+	);
 
 	std::cout << "Exit Main" << std::endl;
 	return 0;

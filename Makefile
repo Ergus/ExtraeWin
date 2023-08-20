@@ -8,7 +8,7 @@ CXXFLAGS += -Wall -DPROFILER_ENABLED -ggdb
 main.x: Profiler.hpp
 
 %.x: %.o
-	$(CXX) $< -o $@
+	$(CXX) $(CXXFLAGS) -ltbb $< -o $@
 
 .PHONY: clean cleanall test
 
