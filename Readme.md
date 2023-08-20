@@ -20,7 +20,7 @@ providing more accurate numbers for system call counters.
 Limitations
 -----------
 
-- As this is intended to be multiplatform it is not possible to use
+- As this is intended to be multi-platform it is not possible to use
 function interception in a portable way.
 
 - Due to the nature of the implementation sometimes the trace files
@@ -98,3 +98,11 @@ histograms.
 ![ParaverTrace](images/New_Histogram_#1@Trace.png)
 
 ![ParaverTrace](images/New_Histogram_#2@Trace.png)
+
+When PROFILER_ENABLED = 2 the heap memory allocations are tracked by
+intercepting the `new` and `delete` operators.
+
+With that information we can build the memory usage graph withing
+`Paraver` or with the provided `memory.py` script.
+
+![ParaverTrace](images/memory.png)
