@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <numeric>
 #include <limits>
+#include <iterator>
+#include <sstream>
 
 class TraceFile {
 
