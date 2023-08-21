@@ -69,7 +69,7 @@ namespace profiler {
 	}
 
 	// In MSWindows this seems possible, but unneeded.
-	void kill_pool()
+	inline void kill_pool()
 	{
 	}
 
@@ -101,7 +101,7 @@ namespace profiler {
 	}
 
 	// function to kill tbb thread-pool on linux.
-	void kill_pool()
+	inline void kill_pool()
 	{
 		// In principle this works with clang and gcc... still need to check intel compiler
         #if defined(_PSTL_PAR_BACKEND_TBB)
