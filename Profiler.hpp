@@ -15,21 +15,25 @@
 #include <iomanip>
 #include <map>
 #include <shared_mutex>
-
-#ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
-// When tbb is installed the compiler with try to use it as a backend for std::execution
-// We need this extra code because the std::execution creates a thread pool that for
-// some reason does not call the thread local destructors.
-#include <oneapi/tbb/global_control.h>
-#endif
-
-namespace profiler {
+#include <unistd.h>
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
 #include <windows.h>
 #include <processthreadsapi.h>
 #include <winbase.h>
+
+#else
+
+#ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
+#include <oneapi/tbb/global_control.h>
+#endif
+
+#endif
+
+namespace profiler {
+
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
 	inline int getNumberOfCores() {
 		SYSTEM_INFO sysinfo;
@@ -63,13 +67,12 @@ namespace profiler {
 		return infoBuf;
 	}
 
+	// In MSWindows this seems possible, but unneeded.
 	void kill_pool()
 	{
 	}
 
 #else // ON Linux
-
-#include <unistd.h>
 
 	inline int getNumberOfCores() {
 		return sysconf(_SC_NPROCESSORS_ONLN);
@@ -444,11 +447,13 @@ namespace profiler {
 	*/
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class InfoThread {
-		const size_t _tid;
+		const uint64_t _tid;
 
 	public:
 		BufferSet<I> &globalBufferSet;
 		Buffer<I, EventEntry> &eventsBuffer;
+
+		const uint32_t _id;
 
 		/**
 		   Thread local Info initialization.
@@ -494,6 +499,8 @@ namespace profiler {
 			if (getInfoThread().eventsBuffer._header._id != 1)
 				throw profiler_error("Master is not running in the first thread");
 
+			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 1);
+
 			profiler::Global<profiler::bSize>::traceMemory = true;
 		}
 
@@ -501,6 +508,8 @@ namespace profiler {
 		{
 			kill_pool(); // kills the thread pool when needed.
 			profiler::Global<profiler::bSize>::traceMemory = false;
+
+			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 0);
 		}
 
 		template <bool ALLOC>
@@ -822,9 +831,11 @@ namespace profiler {
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
 		, eventsBuffer(globalBufferSet.getThreadBuffer(_tid))
+		, _id(eventsBuffer._header._id)
 	{
 		assert(_tid == eventsBuffer._header._tid);
-		eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 1);
+		if (_id > 1)
+			eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 1);
 	}
 
 	template <size_t I>
@@ -833,7 +844,8 @@ namespace profiler {
 		// This is the thread destructor, so, no allocation events must be
 		// reported after this.
 		profiler::Global<profiler::bSize>::traceMemory = false;
-		eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 0);
+		if (_id > 1)
+			eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 0);
 	}
 
 
