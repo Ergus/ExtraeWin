@@ -90,14 +90,14 @@ the code in `Parser.cpp`.
 
 For the example provided in the `main.cpp` the paraver trace looks like:
 
-![ParaverTrace](images/New_window_#1@Trace.png)
+![ParaverTrace](images/Trace.png)
 
 Paraver y capable to perform some simple data analysis like generate
 histograms.
 
-![ParaverTrace](images/New_Histogram_#1@Trace.png)
+![ParaverHistogram1](images/Histogram.png)
 
-![ParaverTrace](images/New_Histogram_#2@Trace.png)
+![ParaverHistogram2](images/Histogram2.png)
 
 When PROFILER_ENABLED = 2 the heap memory allocations are tracked by
 intercepting the `new` and `delete` operators.
@@ -105,4 +105,4 @@ intercepting the `new` and `delete` operators.
 With that information we can build the memory usage graph withing
 `Paraver` or with the provided `memory.py` script.
 
-![ParaverTrace](images/memory.png)
+![MemoryGraph](images/Memory.png)
