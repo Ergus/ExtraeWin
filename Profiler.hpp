@@ -15,7 +15,6 @@
 #include <iomanip>
 #include <map>
 #include <shared_mutex>
-#include <unistd.h>
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
@@ -24,6 +23,8 @@
 #include <winbase.h>
 
 #else
+
+#include <unistd.h>
 
 #ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
 #include <oneapi/tbb/global_control.h>
