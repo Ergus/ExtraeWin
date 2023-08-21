@@ -263,7 +263,7 @@ namespace profiler {
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
-		Buffer(uint16_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime);
+		Buffer(uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime);
 
 		~Buffer();
 
@@ -619,7 +619,7 @@ namespace profiler {
 	// =================== Buffer ==============================================
 	template <size_t I, typename Tevent>
 	Buffer<I,Tevent>::Buffer(
-		uint16_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
+		uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
 	)
 		: _fileName(fileName)
 		, _entries()
