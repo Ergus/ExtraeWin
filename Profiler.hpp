@@ -58,9 +58,13 @@ namespace profiler {
 		{
 			perror("GetComputerName failed");
 			abort();
-		} 
+		}
 
 		return infoBuf;
+	}
+
+	void kill_pool()
+	{
 	}
 
 #else // ON Linux
@@ -92,16 +96,16 @@ namespace profiler {
 		return infoBuf;
 	}
 
-	  // function to kill tbb thread-pool on linux.
-	  void kill_pool()
-	  {
-		  // In principle this works with clang and gcc... still need to check intel compiler
-          #if defined(_PSTL_PAR_BACKEND_TBB)
-		  oneapi::tbb::task_scheduler_handle handle
-		   	  = oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
-		  oneapi::tbb::finalize(handle);
-		  #endif
-	  }
+	// function to kill tbb thread-pool on linux.
+	void kill_pool()
+	{
+		// In principle this works with clang and gcc... still need to check intel compiler
+        #if defined(_PSTL_PAR_BACKEND_TBB)
+		oneapi::tbb::task_scheduler_handle handle
+			= oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
+		oneapi::tbb::finalize(handle);
+        #endif
+	}
 
 #endif
 
@@ -301,6 +305,7 @@ namespace profiler {
 
 
 	public:
+		#undef max
 		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
 		static constexpr T maxEvent = std::numeric_limits<T>::max();
 
@@ -317,7 +322,7 @@ namespace profiler {
 		);
 
 		T registerValueName(
-			std::string name, const std::string &fileName, size_t line, T event, uint32_t value
+			std::string name, const std::string &fileName, size_t line, T event, uint16_t value
 		);
 
 		void createPCF(const std::string &traceDirectory) const
@@ -442,7 +447,7 @@ namespace profiler {
 		const size_t _tid;
 
 	public:
-		std::shared_ptr<BufferSet<I>> globalBufferSet;
+		BufferSet<I> &globalBufferSet;
 		Buffer<I, EventEntry> &eventsBuffer;
 
 		/**
@@ -480,7 +485,6 @@ namespace profiler {
 		}
 
 		Global()
-			: _singleton(new BufferSet<I>())
 		{
 			// Make just a trivial check to force the first access to the
 			// _singletonThread construct it at the very beginning.
@@ -495,8 +499,8 @@ namespace profiler {
 
 		~Global()
 		{
-			if (_singleton.use_count() > 1)
-				kill_pool(); // kills the thread pool when needed.
+			kill_pool(); // kills the thread pool when needed.
+			profiler::Global<profiler::bSize>::traceMemory = false;
 		}
 
 		template <bool ALLOC>
@@ -507,16 +511,15 @@ namespace profiler {
 
 			valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
 			if constexpr (ALLOC)
-				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton->allocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.allocationID, sz);
 			else
-				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton->deallocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.deallocationID, sz);
 		}
 
-
-		thread_local static bool traceMemory;
 		static Global globalInfo;
+		thread_local static bool traceMemory;
 
-		std::shared_ptr<BufferSet<I>> _singleton;
+		BufferSet<I> _singleton;
 	};
 
 	/**
@@ -555,9 +558,9 @@ namespace profiler {
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
 		if (value == 0)
-			return threadInfo.globalBufferSet->eventsNames.registerEventName(name, fileName, line, event);
+			return threadInfo.globalBufferSet.eventsNames.registerEventName(name, fileName, line, event);
 		else
-			return threadInfo.globalBufferSet->eventsNames.registerValueName(name, fileName, line, event, value);
+			return threadInfo.globalBufferSet.eventsNames.registerValueName(name, fileName, line, event, value);
 	}
 
 
@@ -691,7 +694,7 @@ namespace profiler {
 
 	template <typename T>
 	T NameSet<T>::registerValueName(
-		std::string valueName, const std::string &fileName, size_t line, T event, uint32_t value
+		std::string valueName, const std::string &fileName, size_t line, T event, uint16_t value
 	)
 	{
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
@@ -818,10 +821,10 @@ namespace profiler {
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
-		, eventsBuffer(globalBufferSet->getThreadBuffer(_tid))
+		, eventsBuffer(globalBufferSet.getThreadBuffer(_tid))
 	{
 		assert(_tid == eventsBuffer._header._tid);
-		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 1);
+		eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 1);
 	}
 
 	template <size_t I>
@@ -830,7 +833,7 @@ namespace profiler {
 		// This is the thread destructor, so, no allocation events must be
 		// reported after this.
 		profiler::Global<profiler::bSize>::traceMemory = false;
-		eventsBuffer.emplaceEvent(globalBufferSet->threadEventID, 0);
+		eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 0);
 	}
 
 
