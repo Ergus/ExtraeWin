@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(PROFILER_ENABLED) && PROFILER_ENABLED > 0
+#if PROFILER_ENABLED > 0
 
 #include <iostream>
 #include <string.h>
@@ -670,7 +670,7 @@ namespace profiler {
 
 		nameEntry entry {eventName, fileName, line};
 
-		T &eventRef = (event == T() ? ++_counter : event);
+		T eventRef = (event == T() ? ++_counter : event);
 
 		std::lock_guard<std::mutex> lk(_namesMutex);
 		auto it_pair = _namesEventMap.emplace(eventRef, entry);
@@ -852,6 +852,8 @@ namespace profiler {
 
 } // profiler
 
+#if PROFILER_ENABLED > 1
+
 inline void* operator new(size_t sz)
 {
 	profiler::Global<profiler::bSize>::allocate<true>(sz);
@@ -863,6 +865,8 @@ inline void operator delete(void* ptr, size_t sz)
 	free(ptr);
 	profiler::Global<profiler::bSize>::allocate<false>(sz);
 }
+
+#endif
 
 /**
    \defgroup public interface

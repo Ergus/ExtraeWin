@@ -26,11 +26,11 @@ def main(argv):
                 cum += diff
                 arrayX.append(int(sline[5]))
                 arrayY.append(cum/1024)
-                print(f"{sline[5]},{diff},{cum}")
+                #print(f"{sline[5]},{diff},{cum}")
 
     fig, ax = plt.subplots()
     ax.step(arrayX, arrayY)
-    ax.set(xlabel='Time (nS)', ylabel='Memory (Mb)',
+    ax.set(xlabel='Time (nS)', ylabel='Memory (kb)',
            title='Memory usage')
     ax.grid()
 
