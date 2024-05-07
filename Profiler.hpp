@@ -42,9 +42,7 @@ namespace profiler {
 		return sysinfo.dwNumberOfProcessors;
 	}
 
-	/**
-	   Return the cpuID starting by 1
-	*/
+	//! Return the cpuID starting by 1
 	inline unsigned int getCPUId()
 	{
 		return GetCurrentProcessorNumber();
@@ -79,9 +77,7 @@ namespace profiler {
 		return sysconf(_SC_NPROCESSORS_ONLN);
 	}
 
-	/**
-	   Return the cpuID starting by 1
-	*/
+	//! Return the cpuID starting by 1
 	inline unsigned int getCPUId()
 	{
 		const int cpu = sched_getcpu();
@@ -113,9 +109,7 @@ namespace profiler {
 
 #endif
 
-	/**
-	   Get microseconds since the trace begins for a given timePoint
-	*/
+	//! Get microseconds since the trace begins for a given timePoint
 	inline uint64_t getNanoseconds()
 	{
 		// Store the very first time we enter this function and then return the
@@ -127,8 +121,7 @@ namespace profiler {
 			std::chrono::high_resolution_clock::now() - begin).count();
 	}
 
-	// Default buffer size in bytes
-	static constexpr size_t bSize = (1 << 20);
+	static constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes
 
 	// =========================================================================
 	// End of the basic functions
@@ -170,15 +163,13 @@ namespace profiler {
 	};
 
 
-	/**
-	   Event struct that will be reported (and saved into the traces files in binary format)
-
-	   I reserve all the negative values for internal events. And positive values for
-	   user/application events.
-	   Every starting event needs and end event. But I cannot ensure that they will be in the
-	   same cpu (due to thread migration), but they will in the same thread. So, I also save the
-	   threadId with every event in order to make a right reconstruction latter.
-	*/
+	//! Event struct that will be reported (and saved into the traces files in binary format)
+	/** I reserve all the negative values for internal events. And positive
+		values for user/application events.
+		Every starting event needs and end event. But I cannot ensure that they
+		will be in the same cpu (due to thread migration), but they will in the
+		same thread. So, I also save the threadId with every event in order to
+		make a right reconstruction latter. */
 	struct EventEntry {
 		const uint64_t _time;
 		const uint16_t _id;
@@ -194,13 +185,10 @@ namespace profiler {
 		}
 	};
 
-	/**
-	   Buffer class to store the events.
-
-	   This class will always have a file associated to it to flush all the data
-	   when needed.  There will be 1 Buffer/Core in order to make the tracing
-	   events registration completely lock free.
-	*/
+	//! Buffer class to store the events.
+	/** This class will always have a file associated to it to flush all the
+		data when needed.  There will be 1 Buffer/Core in order to make the
+		tracing events registration completely lock free. */
 	template <size_t I, typename Tevent>
 	class Buffer {
 
