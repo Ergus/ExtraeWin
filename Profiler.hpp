@@ -36,75 +36,81 @@ namespace profiler {
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
-	inline int getNumberOfCores() {
-		SYSTEM_INFO sysinfo;
-		GetSystemInfo(&sysinfo);
-		return sysinfo.dwNumberOfProcessors;
-	}
-
-	//! Return the cpuID starting by 1
-	inline unsigned int getCPUId()
-	{
-		return GetCurrentProcessorNumber();
-		// PROCESSOR_NUMBER procNumber;
-		// GetCurrentProcessorNumberEx(&procNumber);
-		// return procNumber.Group * 64 + procNumber.Number + 1;
-	}
-
-	inline std::string getHostName()
-	{
-		TCHAR  infoBuf[32767];
-		DWORD  bufCharCount = 32767;
-
-		// Get and display the name of the computer.
-		if (!GetComputerName( infoBuf, &bufCharCount ) )
-		{
-			perror("GetComputerName failed");
-			abort();
+	namespace {
+		inline int getNumberOfCores() {
+			SYSTEM_INFO sysinfo;
+			GetSystemInfo(&sysinfo);
+			return sysinfo.dwNumberOfProcessors;
 		}
 
-		return infoBuf;
-	}
+		//! Return the cpuID starting by 1
+		inline unsigned int getCPUId()
+		{
+			return GetCurrentProcessorNumber();
+			// PROCESSOR_NUMBER procNumber;
+			// GetCurrentProcessorNumberEx(&procNumber);
+			// return procNumber.Group * 64 + procNumber.Number + 1;
+		}
 
-	// In MSWindows this seems possible, but unneeded.
-	inline void kill_pool()
-	{
+		inline std::string getHostName()
+		{
+			TCHAR  infoBuf[32767];
+			DWORD  bufCharCount = 32767;
+
+			// Get and display the name of the computer.
+			if (!GetComputerName( infoBuf, &bufCharCount ) )
+				{
+					perror("GetComputerName failed");
+					abort();
+				}
+
+			return infoBuf;
+		}
+
+		// In MSWindows this seems possible, but unneeded.
+		inline void kill_pool()
+		{
+		}
 	}
 
 #else // ON Linux
 
-	inline int getNumberOfCores() {
-		return sysconf(_SC_NPROCESSORS_ONLN);
-	}
+	namespace {
 
-	//! Return the cpuID starting by 1
-	inline unsigned int getCPUId()
-	{
-		const int cpu = sched_getcpu();
-		assert(cpu >= 0);
-		return cpu + 1;
-	}
+		inline int getNumberOfCores() {
+			return sysconf(_SC_NPROCESSORS_ONLN);
+		}
 
-	inline std::string getHostName()
-	{
-		constexpr size_t  len = 128;
-		char  infoBuf[len];
+		//! Return the cpuID starting by 1
+		inline unsigned int getCPUId()
+		{
+			const int cpu = sched_getcpu();
+			assert(cpu >= 0);
+			return cpu + 1;
+		}
 
-		if (gethostname(infoBuf, len) != 0)
-			perror("Error getting hostname");
+		inline std::string getHostName()
+		{
+			constexpr size_t  len = 128;
+			char  infoBuf[len];
 
-		return infoBuf;
-	}
+			if (gethostname(infoBuf, len) != 0)
+				perror("Error getting hostname");
 
-	// function to kill tbb thread-pool on linux.
-	inline void kill_pool()
-	{
-		// In principle this works with clang and gcc... still need to check intel compiler
-        #if defined(_PSTL_PAR_BACKEND_TBB)
-		oneapi::tbb::task_scheduler_handle handle
-			= oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
-		oneapi::tbb::finalize(handle);
-        #endif
+			return infoBuf;
+		}
+
+		// function to kill tbb thread-pool on linux.
+		inline void kill_pool()
+		{
+			// In principle this works with clang and gcc... still need to check intel compiler
+#if defined(_PSTL_PAR_BACKEND_TBB)
+			oneapi::tbb::task_scheduler_handle handle
+				= oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
+			oneapi::tbb::finalize(handle);
+#endif
+		}
+
 	}
 
 #endif
