@@ -86,16 +86,16 @@ public:
 			throw std::runtime_error("Failed to read header in file: " + filePath.string());
 
 		const size_t nentries = header._nentries;
-		std::cout << " -> "  << nentries
-		          << " events (" <<  nentries * sizeof(EventEntry) << " bytes)" << std::endl;
+		const size_t readSize = nentries * sizeof(EventEntry);
+		std::cout << " -> " << nentries << " events (" << readSize << " bytes)" << std::endl;
 
+		// We firt read the whole file into a vector and then run the vector once to copy to the
+		// Internal storage.
 		std::vector<EventEntry> tmp(nentries);
 
-		file.read(reinterpret_cast<char *>(tmp.data()), nentries * sizeof(EventEntry));
+		file.read(reinterpret_cast<char *>(tmp.data()), readSize);
 		if (!file)
-			throw std::runtime_error(
-				"Failed to read events in file: " + filePath.string()
-			);
+			throw std::runtime_error("Failed to read events in file: " + filePath.string());
 
 		assert(_body.size() == 0);
 		_body.reserve(nentries);
@@ -112,6 +112,9 @@ public:
 		_startGTime = header._startGTime;
 	}
 
+	//! The operator+ actually merges two TraceFiles
+	/** The time order needs to be maintained and there is also another
+		pass needed to create communications. */
 	friend TraceFile operator+(const TraceFile &a, const TraceFile &b)
 	{
 		TraceFile ret;
@@ -123,10 +126,12 @@ public:
 		           b._body.begin(), b._body.end(),
 		           std::back_inserter(ret._body));
 
+		// Merge and sort cores
 		std::set_union(a._coresList.begin(), a._coresList.end(),
 		               b._coresList.begin(), b._coresList.end(),
 		               std::inserter(ret._coresList, ret._coresList.begin()));
 
+		// Merge and sort threads
 		std::set_union(a._threadList.begin(), a._threadList.end(),
 		               b._threadList.begin(), b._threadList.end(),
 		               std::inserter(ret._threadList, ret._threadList.begin()));
