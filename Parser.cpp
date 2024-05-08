@@ -24,6 +24,8 @@ public:
 		uint64_t _startGTime;    /**< Start global time >*/
 	};
 
+	//! EventEntry as written in the binary
+	/** Needs to overlap with the one defined in Profiler */
 	struct EventEntry {
 		uint64_t _time;
 		uint16_t _id;
@@ -31,6 +33,7 @@ public:
 		uint32_t _value;
 	};
 
+	//! EventEntry as stored internally in the Parses
 	struct InternalEntry {
 
 		uint64_t _time;

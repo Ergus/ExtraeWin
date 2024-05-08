@@ -22,6 +22,43 @@
 #include <processthreadsapi.h>
 #include <winbase.h>
 
+namespace {
+	inline int getNumberOfCores() {
+		SYSTEM_INFO sysinfo;
+		GetSystemInfo(&sysinfo);
+		return sysinfo.dwNumberOfProcessors;
+	}
+
+	//! Return the cpuID starting by 1
+	inline unsigned int getCPUId()
+	{
+		return GetCurrentProcessorNumber();
+		// PROCESSOR_NUMBER procNumber;
+		// GetCurrentProcessorNumberEx(&procNumber);
+		// return procNumber.Group * 64 + procNumber.Number + 1;
+	}
+
+	inline std::string getHostName()
+	{
+		TCHAR  infoBuf[32767];
+		DWORD  bufCharCount = 32767;
+
+		// Get and display the name of the computer.
+		if (!GetComputerName( infoBuf, &bufCharCount ) )
+			{
+				perror("GetComputerName failed");
+				abort();
+			}
+
+		return infoBuf;
+	}
+
+	// In MSWindows this seems possible, but unneeded.
+	inline void kill_pool()
+	{
+	}
+}
+
 #else
 
 #include <unistd.h>
@@ -30,92 +67,49 @@
 #include <oneapi/tbb/global_control.h>
 #endif
 
+namespace {
+
+	inline int getNumberOfCores() {
+		return sysconf(_SC_NPROCESSORS_ONLN);
+	}
+
+	//! Return the cpuID starting by 1
+	inline unsigned int getCPUId()
+	{
+		const int cpu = sched_getcpu();
+		assert(cpu >= 0);
+		return cpu + 1;
+	}
+
+	inline std::string getHostName()
+	{
+		constexpr size_t  len = 128;
+		char  infoBuf[len];
+
+		if (gethostname(infoBuf, len) != 0)
+			perror("Error getting hostname");
+
+		return infoBuf;
+	}
+
+	// function to kill tbb thread-pool on linux.
+	inline void kill_pool()
+	{
+		// In principle this works with clang and gcc... still need to check intel compiler
+		#ifdef _PSTL_PAR_BACKEND_TBB
+		oneapi::tbb::task_scheduler_handle handle
+			= oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
+		oneapi::tbb::finalize(handle);
+		#endif
+	}
+
+}
+
 #endif
 
 namespace profiler {
 
-#if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
-
-	namespace {
-		inline int getNumberOfCores() {
-			SYSTEM_INFO sysinfo;
-			GetSystemInfo(&sysinfo);
-			return sysinfo.dwNumberOfProcessors;
-		}
-
-		//! Return the cpuID starting by 1
-		inline unsigned int getCPUId()
-		{
-			return GetCurrentProcessorNumber();
-			// PROCESSOR_NUMBER procNumber;
-			// GetCurrentProcessorNumberEx(&procNumber);
-			// return procNumber.Group * 64 + procNumber.Number + 1;
-		}
-
-		inline std::string getHostName()
-		{
-			TCHAR  infoBuf[32767];
-			DWORD  bufCharCount = 32767;
-
-			// Get and display the name of the computer.
-			if (!GetComputerName( infoBuf, &bufCharCount ) )
-				{
-					perror("GetComputerName failed");
-					abort();
-				}
-
-			return infoBuf;
-		}
-
-		// In MSWindows this seems possible, but unneeded.
-		inline void kill_pool()
-		{
-		}
-	}
-
-#else // ON Linux
-
-	namespace {
-
-		inline int getNumberOfCores() {
-			return sysconf(_SC_NPROCESSORS_ONLN);
-		}
-
-		//! Return the cpuID starting by 1
-		inline unsigned int getCPUId()
-		{
-			const int cpu = sched_getcpu();
-			assert(cpu >= 0);
-			return cpu + 1;
-		}
-
-		inline std::string getHostName()
-		{
-			constexpr size_t  len = 128;
-			char  infoBuf[len];
-
-			if (gethostname(infoBuf, len) != 0)
-				perror("Error getting hostname");
-
-			return infoBuf;
-		}
-
-		// function to kill tbb thread-pool on linux.
-		inline void kill_pool()
-		{
-			// In principle this works with clang and gcc... still need to check intel compiler
-#if defined(_PSTL_PAR_BACKEND_TBB)
-			oneapi::tbb::task_scheduler_handle handle
-				= oneapi::tbb::task_scheduler_handle{oneapi::tbb::attach{}};
-			oneapi::tbb::finalize(handle);
-#endif
-		}
-
-	}
-
-#endif
-
-	//! Get microseconds since the trace begins for a given timePoint
+	//! Get nanoseconds since the trace begins for a given timePoint
 	inline uint64_t getNanoseconds()
 	{
 		// Store the very first time we enter this function and then return the
@@ -128,10 +122,6 @@ namespace profiler {
 	}
 
 	static constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes
-
-	// =========================================================================
-	// End of the basic functions
-	// =========================================================================
 
 	template<typename T>
 	class valueGuard
@@ -486,11 +476,12 @@ namespace profiler {
 
 		Global()
 		{
-			// Make just a trivial check to force the first access to the
-			// _singletonThread construct it at the very beginning.
-			// This is because the thread-local variables are constructed on demand,
-			// but the static are built before main  (eagerly) So we need to do this
-			// to compute the real execution time.
+			// Make just a trivial check to force the first access to
+			// the _singletonThread construct it at the very
+			// beginning.  This is because the thread-local variables
+			// are constructed on demand, but the static are built
+			// before main (eagerly) So we need to do this to compute
+			// the real execution time.
 			if (getInfoThread().eventsBuffer._header._id != 1)
 				throw profiler_error("Master is not running in the first thread");
 
@@ -568,29 +559,23 @@ namespace profiler {
 	}
 
 
-	/**
-	   Guard class (more info in the constructor docstring)
-
-	   This is a tricky variable to rely event pairs emission (start-end)
-	   with RAII. This simplifies instrumentation on the user side and may
-	   rely on the instrumentation macro.
-	   The constructor emits an event that will be paired with the
-	   equivalent one emitted in the destructor.
-	*/
-	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb >/
+	//! Guard class (more info in the constructor docstring)
+	/** This is a tricky variable to rely event pairs emission
+		(start-end) with RAII. This simplifies instrumentation on the
+		user side and may rely on the instrumentation macro.  The
+		constructor emits an event that will be paired with the
+		equivalent one emitted in the destructor. */
+	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb
 	class ProfilerGuard {
-
-		const uint16_t _id;  /**< Event id for this guard. remembered to emit on the destructor */
+		const uint16_t _id;  //< Event id for this guard. remembered to emit on the destructor
 
 	public:
-
-		// Profile guard should be unique.
+		// Profile guard should be unique and not transferable.
+		ProfilerGuard(ProfilerGuard &&) = delete;
 		ProfilerGuard(const ProfilerGuard &) = delete;
 		ProfilerGuard& operator=(const ProfilerGuard &) = delete;
 
-		/**
-		   Guard constructor.
-		*/
+		//! Guard constructor
 		ProfilerGuard(uint16_t id, uint16_t value)
 			: _id(id)
 		{
@@ -598,6 +583,7 @@ namespace profiler {
 			Global<I>::getInfoThread().eventsBuffer.emplaceEvent(_id, value);
 		}
 
+		//! Guard destructor
 		~ProfilerGuard()
 		{
 			valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
