@@ -151,10 +151,7 @@ public:
 			// Indicate to the last message that there was a migration between
 			// these two steps.
 			if (_body.size() > 0 && _body.back()._core != entry._core)
-			{
-				std::cout << "Fount migration" << std::endl;
 				_body.back().addMigration(entry, header._id);
-			}
 
 			_body.emplace_back(entry, header._id);
 			_coresList.emplace(entry._core);
