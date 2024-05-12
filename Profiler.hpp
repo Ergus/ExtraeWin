@@ -59,7 +59,7 @@ namespace {
 	}
 }
 
-#else
+#else // defined(WIN32)
 
 #include <unistd.h>
 
@@ -105,9 +105,10 @@ namespace {
 
 }
 
-#endif
+#endif // defined(WIN32)
 
-namespace profiler {
+// Expand the empty namespace to add the common functions
+namespace {
 
 	//! Get nanoseconds since the trace begins for a given timePoint
 	inline uint64_t getNanoseconds()
@@ -121,8 +122,10 @@ namespace profiler {
 			std::chrono::high_resolution_clock::now() - begin).count();
 	}
 
-	static constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes
 
+	/** Guard class to set value on variable, but restore at end of scope.
+		This somehow mimics the lexical scoping behavior for global variables to
+		set the value in the scope temporarily. */
 	template<typename T>
 	class valueGuard
 	{
@@ -131,10 +134,15 @@ namespace profiler {
 		T &_valueRef;
 
 	public:
+		valueGuard(const valueGuard&) = delete; // A guard is NEVER copyable!!
+
+		/** Guard constructor.
+			@param value is the variable to be temporarily modified.
+			@param newValue is the new value to set temporarily. */
 		explicit valueGuard(T &value, T newValue)
 			: _initialValue(value)
 			, _settedValue(newValue)
-			, _valueRef(value)
+			, _valueRef(value)  // assign reference to remember what to restore
 		{
 			_valueRef = newValue;
 		}
@@ -145,7 +153,13 @@ namespace profiler {
 			_valueRef = _initialValue;
 		}
 	};
+}
 
+namespace profiler {
+
+	constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes (1Mb)
+
+	/** Custom error class to handle them if needed. */
 	class profiler_error : public std::exception {
 		const std::string message;
     public:
@@ -158,65 +172,67 @@ namespace profiler {
 		}
 	};
 
+	/** Buffer class to store the events.
 
-	//! Event struct that will be reported (and saved into the traces files in binary format)
-	/** I reserve all the negative values for internal events. And positive
-		values for user/application events.
-		Every starting event needs and end event. But I cannot ensure that they
-		will be in the same cpu (due to thread migration), but they will in the
-		same thread. So, I also save the threadId with every event in order to
-		make a right reconstruction latter. */
-	struct EventEntry {
-		const uint64_t _time;
-		const uint16_t _id;
-		const uint16_t _core;
-		const uint32_t _value;
-
-		explicit EventEntry(uint16_t id, uint16_t value)
-			: _time(getNanoseconds())
-			, _id(id)
-			, _core(getCPUId())
-			, _value(value)
-		{
-		}
-	};
-
-	//! Buffer class to store the events.
-	/** This class will always have a file associated to it to flush all the
+		This class will always have a file associated to it to flush all the
 		data when needed.  There will be 1 Buffer/Core in order to make the
-		tracing events registration completely lock free. */
-	template <size_t I, typename Tevent>
+		tracing events registration completely lock free.
+		@tparam I buffer size to reserve in bytes */
+	template <size_t I>
 	class Buffer {
 
-		/** Maximum size for the buffers = 1Mb */
-		static constexpr size_t _maxEntries = ( I + sizeof(Tevent) - 1 ) / sizeof(Tevent);
+		/** Header struct
 
-		/**
-		   Header struct
-
-		   This is the struct that will be written in the header of the
-		   file. This is update don every flush and keeps information needed in
-		   the head of the file to read it latter.
-		*/
+			This is the struct that will be written in the header of the
+			file. This is update don every flush and keeps information needed in
+			the head of the file to read it latter. */
 		struct TraceHeader {
-			uint32_t _id;   // Can be ThreadID
-			uint32_t _totalFlushed;
-			uint64_t _tid;
+			const uint32_t _id;   // Can be ThreadID
+			const uint64_t _tid;
 			uint64_t _startGTime;    /**< Start global time >*/
+			uint32_t _totalFlushed {0};
 
 			TraceHeader(uint32_t id, uint64_t tid, uint64_t startGTime)
-				: _id(id), _totalFlushed(0), _tid(tid), _startGTime(startGTime)
+				: _id(id), _tid(tid), _startGTime(startGTime)
 			{}
 
 		};
 
+		//! Event struct that will be reported (and saved into the traces files in binary format)
+		/** I reserve all the negative values for internal events. And positive
+			values for user/application events.
+			Every starting event needs and end event. But I cannot ensure that they
+			will be in the same cpu (due to thread migration), but they will in the
+			same thread. So, I also save the threadId with every event in order to
+			make a right reconstruction latter. */
+		struct EventEntry {
+			const uint64_t _time;
+			const uint16_t _id;
+			const uint16_t _core;
+			const uint32_t _value;
+
+			explicit EventEntry(uint16_t id, uint16_t value)
+				: _time(getNanoseconds())
+				, _id(id)
+				, _core(getCPUId())
+				, _value(value)
+			{
+			}
+		};
+
+
+		/** Maximum size for the buffers = 1Mb */
+		static constexpr size_t _maxEntries = ( I + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);
+
 		const std::string _fileName;      //< Name of the binary file with trace information
 		std::ofstream _file;		      //< fstream with file open; every write will be appended and binary. >/
-		std::vector<Tevent> _entries;     //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
+
+		EventEntry *_entries {nullptr};   //< Buffer with entries; it will be flushed when the number of entries reach _maxEntries;
+		size_t _nEntries {0};
 
 		void flushBuffer()
 		{
-			if (_entries.empty())
+			if (_nEntries == 0)
 				return;
 
 			// We open the file the first time we need t flush the data.
@@ -228,7 +244,7 @@ namespace profiler {
 				_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
 			}
 
-			_header._totalFlushed += _entries.size();
+			_header._totalFlushed += _nEntries;
 
 			// Go to beginning and write the header
 			_file.seekp(0, std::ios_base::beg);
@@ -236,14 +252,15 @@ namespace profiler {
 
 			// Go to end and write the data
 			_file.seekp(0, std::ios_base::end);
-			_file.write(reinterpret_cast<char *>(_entries.data()), _entries.size() * sizeof(Tevent));
+			_file.write(reinterpret_cast<char *>(_entries), _nEntries * sizeof(EventEntry));
 
-			// clear the buffer.
-			_entries.clear();
+			// Clear the buffer.
+			_nEntries = 0;
 		}
 
 	public:
 		// No copy
+		Buffer(Buffer &&) = delete;
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
@@ -257,13 +274,11 @@ namespace profiler {
 
 	}; // Buffer
 
-	/**
-	   Name set thread save map container.
+	/** Name set thread save map container.
 
-	   This is a thread safe container to register the relation between event
-	   name and id. This container is intend to be accessed only once/event to
-	   register the name of the event.
-	*/
+		This is a thread safe container to register the relation between event
+		name and id. This container is intend to be accessed only once/event to
+		register the name of the event. */
 	template <typename T>
 	class NameSet {
 
@@ -313,44 +328,16 @@ namespace profiler {
 			std::string name, const std::string &fileName, size_t line, T event, uint16_t value
 		);
 
-		void createPCF(const std::string &traceDirectory) const
-		{
-			// PCF File
-			std::ofstream pcffile(traceDirectory + "/Trace.pcf", std::ios::out);
-
-			// Register all Events types names.
-			for (auto it : _namesEventMap)
-			{
-				const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
-
-				pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
-				pcffile << "EVENT_TYPE" << std::endl;
-				pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
-
-				// Create a "VALUES" sections if some value is registered for this event
-				if (!eventEntry._namesValuesMap.empty())
-				{
-					pcffile << "VALUES" << std::endl;
-					for (auto itValues : eventEntry._namesValuesMap)
-						pcffile << itValues.first << " "
-						        << eventEntry.name << ":" << itValues.second.name << std::endl;
-				}
-
-				pcffile << std::endl;
-
-			}
-			pcffile.close();
-		}
+		void createPCF(const std::string &traceDirectory) const;
 
 	private:
 		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
-		T _counter = maxUserEvent;           /**< counter for automatic function registration */
-		std::map<T, nameEntry> _namesEventMap;    /**< map with the events names */
+		T _counter = maxUserEvent;               /**< counter for automatic function registration */
+		std::map<T, nameEntry> _namesEventMap;   /**< map with the events names */
 	}; // NameSet
 
 
-	/**
-	   BufferSet container
+	/** BufferSet container
 
 	   This is container stores the buffer for every thread. in a map <tid,
 	   Buffer> This is intended to remember the tid to reuse the Buffer because
@@ -362,20 +349,17 @@ namespace profiler {
 
 	   This is because it seems like on GNU/Linux the global variables are
 	   destructed after the main thread; but in MSWindows the Global variables
-	   seems to be removed before the main thread completes.
-	*/
+	   seems to be removed before the main thread completes. */
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
-		/**
-		   Static utility function to build the trace directory
-		*/
+		/** Static utility function to build the trace directory */
 		static std::string getTraceDirectory(uint64_t systemTimePoint);
 
 		const uint64_t _startSystemTimePoint;
 		const std::string _traceDirectory;
 
 		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<I,EventEntry>> _eventsMap;           /**< This map contains the relation tid->id */
+		std::map<size_t, Buffer<I>> _eventsMap;           /**< This map contains the relation tid->id */
 
 		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
 
@@ -388,27 +372,25 @@ namespace profiler {
 		~BufferSet();
 
 
-		/**
-		   Get the Buffer_t associated with a thread id hash
+		/** Get the Buffer_t associated with a thread id hash
 
 		   The threadIds are usually reused after a thread is destroyed.
-		   Opening/closing files on every thread creation/deletion may be
-		   too expensive; especially if the threads are created destroyed
-		   very frequently.
+		   Opening/closing files on every thread creation/deletion may be too
+		   expensive; especially if the threads are created destroyed very
+		   frequently.
 
-		   We keep the associative map <tid, Buffer> in order to reuse
-		   Buffer and only execute IO operations when the buffer is full or
-		   at the end of the execution.
+		   We keep the associative map <tid, Buffer> in order to reuse Buffer
+		   and only execute IO operations when the buffer is full or at the end
+		   of the execution.
 
 		   The extra cost for this is that we need to take a lock once (on
-		   thread construction or when emitting the first event from a
-		   thread) in order to get it's associated buffer.  This function is
-		   responsible to take the lock and return the associated buffer.
-		   When a threadId is seen for a first time this function creates
-		   the new entry in the map, construct the Buffer and assign an
-		   ordinal id for it.  Any optimization here will be very welcome.
-		*/
-		Buffer<I, EventEntry> &getThreadBuffer(size_t tid);
+		   thread construction or when emitting the first event from a thread)
+		   in order to get it's associated buffer.  This function is responsible
+		   to take the lock and return the associated buffer.  When a threadId
+		   is seen for a first time this function creates the new entry in the
+		   map, construct the Buffer and assign an ordinal id for it.  Any
+		   optimization here will be very welcome. */
+		Buffer<I> &getThreadBuffer(size_t tid);
 
 		// Events names register
 		NameSet<uint16_t> eventsNames;
@@ -420,48 +402,42 @@ namespace profiler {
 	}; // BufferSet
 
 
-	/**
-	   Class for thread local singleton.
+	/** Class for thread local singleton.
 
-	   This class will be allocated in a copy/thead in order to perform the
-	   events emission completely thread free.
-	   The constructor of this object takes place the first time an event is
-	   emitted from some thread; so it is not very accurate to use it to measure
-	   total thread duration. However, it is the best we have until we can
-	   enforce some thread hooks.
-	*/
+		This class will be allocated in a copy/thead in order to perform the
+		events emission completely thread free.  The constructor of this object
+		takes place the first time an event is emitted from some thread; so it
+		is not very accurate to use it to measure total thread
+		duration. However, it is the best we have until we can enforce some
+		thread hooks. */
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class InfoThread {
 		const uint64_t _tid;
 
 	public:
 		BufferSet<I> &globalBufferSet;
-		Buffer<I, EventEntry> &eventsBuffer;
+		Buffer<I> &eventsBuffer;
 
 		const uint32_t _id;
 
-		/**
-		   Thread local Info initialization.
+		/** Thread local Info initialization.
 
-		   The class is actually constructed the first time the thread
-		   local variables is accesses. But the buffer is not destroyed on
-		   thread finalization because the same threadID may be reused in
-		   the future.  This emits an event of type 2 and value tid (which
-		   is always bigger than zero).
-		*/
+			The class is actually constructed the first time the thread local
+			variables is accesses. But the buffer is not destroyed on thread
+			finalization because the same threadID may be reused in the future.
+			This emits an event of type 2 and value tid (which is always bigger
+			than zero). */
 		InfoThread();
 
 		~InfoThread();
 
 	}; // InfoThread
 
-	/**
-	   Info container with global variables.
+	/** Info container with global variables.
 
-	   This gives access to the thread and global static variables. And only
-	   holds one pointer to the BufferSet object to avoid its premature
-	   deletion.
-	*/
+		This gives access to the thread and global static variables. And only
+		holds one pointer to the BufferSet object to avoid its premature
+		deletion. */
 	template <size_t I>
 	class Global {
 
@@ -469,31 +445,30 @@ namespace profiler {
 
 		static InfoThread<I> &getInfoThread()
 		{
-			assert (profiler::Global<profiler::bSize>::traceMemory == false);
+			assert (profiler::Global<I>::traceMemory == false);
 			thread_local static InfoThread<I> threadInfo;
 			return threadInfo;
 		}
 
 		Global()
 		{
-			// Make just a trivial check to force the first access to
-			// the _singletonThread construct it at the very
-			// beginning.  This is because the thread-local variables
-			// are constructed on demand, but the static are built
-			// before main (eagerly) So we need to do this to compute
-			// the real execution time.
+			// Make just a trivial check to force the first access to the
+			// _singletonThread construct it at the very beginning.  This is
+			// because the thread-local variables are constructed on demand, but
+			// the static are built before main (eagerly) So we need to do this
+			// to compute the real execution time.
 			if (getInfoThread().eventsBuffer._header._id != 1)
 				throw profiler_error("Master is not running in the first thread");
 
 			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 1);
 
-			profiler::Global<profiler::bSize>::traceMemory = true;
+			profiler::Global<I>::traceMemory = true;
 		}
 
 		~Global()
 		{
 			kill_pool(); // kills the thread pool when needed.
-			profiler::Global<profiler::bSize>::traceMemory = false;
+			profiler::Global<I>::traceMemory = false;
 
 			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 0);
 		}
@@ -504,7 +479,7 @@ namespace profiler {
 			if (!traceMemory)
 				return;
 
-			valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
+			valueGuard guard(profiler::Global<I>::traceMemory, false);
 			if constexpr (ALLOC)
 				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.allocationID, sz);
 			else
@@ -517,32 +492,28 @@ namespace profiler {
 		BufferSet<I> _singleton;
 	};
 
-	/**
-	   Set the trace memory to false by when thread initialize.
+	/** Set the trace memory to false by when thread initialize.
 
-	   So all the threads can initialize (itself and the profiler) without
-	   tracking allocation and create an infty loop... this is not the best
-	   approach because the memory consumed by the thread itself is not tracked,
-	   but only the memory used after the first event within the thread.
-	 */
+		So all the threads can initialize (itself and the profiler) without
+		tracking allocation and create an infty loop... this is not the best
+		approach because the memory consumed by the thread itself is not tracked,
+		but only the memory used after the first event within the thread. */
 	template <size_t I>
 	thread_local bool Global<I>::traceMemory(false);
-
 
 	template <size_t I>
 	Global<I> Global<I>::globalInfo;
 
+	/** Public function to create new events.
 
-	/**
-	   Public function to create new events.
-
-	   This registers a new pair eventName -> value wrapping Object oriented calls.
-	*/
+	   This registers a new pair eventName -> value wrapping Object oriented
+	   calls. */
 	inline uint16_t registerName(
 		const std::string &name,
 		const std::string &fileName, size_t line,
 		uint16_t event, uint16_t value
 	)
+	
 	{
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
@@ -559,12 +530,12 @@ namespace profiler {
 	}
 
 
-	//! Guard class (more info in the constructor docstring)
-	/** This is a tricky variable to rely event pairs emission
-		(start-end) with RAII. This simplifies instrumentation on the
-		user side and may rely on the instrumentation macro.  The
-		constructor emits an event that will be paired with the
-		equivalent one emitted in the destructor. */
+	/** Guard class (more info in the constructor docstring).
+
+		This is a tricky variable to rely event pairs emission (start-end) with
+		RAII. This simplifies instrumentation on the user side and may rely on
+		the instrumentation macro.  The constructor emits an event that will be
+		paired with the equivalent one emitted in the destructor. */
 	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb
 	class ProfilerGuard {
 		const uint16_t _id;  //< Event id for this guard. remembered to emit on the destructor
@@ -586,7 +557,7 @@ namespace profiler {
 		//! Guard destructor
 		~ProfilerGuard()
 		{
-			valueGuard guard(profiler::Global<profiler::bSize>::traceMemory, false);
+			valueGuard guard(profiler::Global<I>::traceMemory, false);
 			Global<I>::getInfoThread().eventsBuffer.emplaceEvent(_id, 0);
 		}
 
@@ -597,40 +568,37 @@ namespace profiler {
 	// ==================================================
 
 	// =================== Buffer ==============================================
-	template <size_t I, typename Tevent>
-	Buffer<I,Tevent>::Buffer(
+	template <size_t I>
+	Buffer<I>::Buffer(
 		uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
 	)
 		: _fileName(fileName)
-		, _entries()
 		, _header(id, tid, startGTime)
 	{
 		// Reserve memory for the buffer.
-		_entries.reserve(_maxEntries);
+		_entries = (EventEntry *) malloc(_maxEntries * sizeof(EventEntry));
 	}
 
 
-	template <size_t I, typename Tevent>
-	Buffer<I,Tevent>::~Buffer()
+	template <size_t I>
+	Buffer<I>::~Buffer()
 	{
 		flushBuffer(); // Flush all remaining events
+		free(_entries);
 		_file.close(); // close the file only at the end.
 	}
 
 
-	template <size_t I, typename Tevent>
-	void Buffer<I,Tevent>::emplaceEvent(uint16_t id, uint16_t value)
+	template <size_t I>
+	void Buffer<I>::emplaceEvent(uint16_t id, uint16_t value)
 	{
-		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(profiler::Global<I>::traceMemory == false);
 
-		_entries.emplace_back(id, value);
+		new (&_entries[_nEntries++]) EventEntry(id, value);
 
-		assert(_entries.size() <= _maxEntries);
-
-		if (_entries.size() == _maxEntries)
+		assert(_nEntries <= _maxEntries);
+		if (_nEntries == _maxEntries)
 			flushBuffer();
-
-		assert(_entries.size() < _maxEntries);
 	}
 
 
@@ -638,7 +606,7 @@ namespace profiler {
 	template <typename T>
 	T NameSet<T>::registerEventName(
 		std::string eventName, const std::string &fileName, size_t line, T event
-	)
+	) 
 	{
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
 
@@ -680,8 +648,6 @@ namespace profiler {
 		return eventRef;
 	}
 
-
-
 	template <typename T>
 	T NameSet<T>::registerValueName(
 		std::string valueName, const std::string &fileName, size_t line, T event, uint16_t value
@@ -719,6 +685,36 @@ namespace profiler {
 			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 			+ " it is already taken by '" + itValue.first->second.name;
 		throw profiler_error(message);
+	}
+
+	template <typename T>
+	void NameSet<T>::createPCF(const std::string &traceDirectory) const
+	{
+		// PCF File
+		std::ofstream pcffile(traceDirectory + "/Trace.pcf", std::ios::out);
+
+		// Register all Events types names.
+		for (auto it : _namesEventMap)
+		{
+			const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
+
+			pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
+			pcffile << "EVENT_TYPE" << std::endl;
+			pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
+
+			// Create a "VALUES" sections if some value is registered for this event
+			if (!eventEntry._namesValuesMap.empty())
+			{
+				pcffile << "VALUES" << std::endl;
+				for (auto itValues : eventEntry._namesValuesMap)
+					pcffile << itValues.first << " "
+					        << eventEntry.name << ":" << itValues.second.name << std::endl;
+			}
+
+			pcffile << std::endl;
+
+		}
+		pcffile.close();
 	}
 
 	// =================== BufferSet ===========================================
@@ -766,7 +762,7 @@ namespace profiler {
 	}
 
 	template <size_t I>
-	Buffer<I, EventEntry> &BufferSet<I>::getThreadBuffer(size_t tid)
+	Buffer<I> &BufferSet<I>::getThreadBuffer(size_t tid)
 	{
 		// We attempt to tale the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
@@ -797,14 +793,13 @@ namespace profiler {
 	template <size_t I>
 	std::string BufferSet<I>::getTraceDirectory(uint64_t systemTimePoint)
 	{
-		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(profiler::Global<I>::traceMemory == false);
 		const time_t localTime = static_cast<time_t>(systemTimePoint);
 
 		std::stringstream ss;
 		ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
 		return ss.str();
 	}
-
 
 	// =================== InfoThread ==========================================
 	template <size_t I>
@@ -824,7 +819,7 @@ namespace profiler {
 	{
 		// This is the thread destructor, so, no allocation events must be
 		// reported after this.
-		profiler::Global<profiler::bSize>::traceMemory = false;
+		profiler::Global<I>::traceMemory = false;
 		if (_id > 1)
 			eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 0);
 	}
@@ -846,27 +841,24 @@ inline void operator delete(void* ptr, size_t sz)
 	profiler::Global<profiler::bSize>::allocate<false>(sz);
 }
 
-#endif
+#endif // PROFILER_ENABLED > 1
 
-/**
-   \defgroup public interface
-   \brief This is the simpler linker list and its functions
+/** \defgroup public interface
+	\brief This is the simpler linker list and its functions
 
-   Here starts what is intended to be the public interface:
-   A set of macros that generate instrumentation when PROFILER_ENABLED > 0
-   otherwise they expand to nothing.
+	Here starts what is intended to be the public interface:
+	A set of macros that generate instrumentation when PROFILER_ENABLED > 0
+	otherwise they expand to nothing.
    @{
 */
 
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
 
-/**
-   Instrument the function scope
+/** Instrument the function scope
 
    Similar to instrument function, but requires more parameters. This can be
-   nested inside functions to generate independent events.
-*/
+   nested inside functions to generate independent events. */
 #define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
 	profiler::Global<profiler::bSize>::traceMemory = false;				\
 	static uint16_t CAT(__profiler_id_,EVENT) =							\
@@ -874,14 +866,12 @@ inline void operator delete(void* ptr, size_t sz)
 	profiler::ProfilerGuard guard(CAT(__profiler_id_,EVENT), VALUE);	\
 	profiler::Global<profiler::bSize>::traceMemory = true;
 
-/**
-   Main macro to instrument functions.
+/** Main macro to instrument functions.
 
    This macro creates a new event value = 1 for the __profiler_function_id event.
    The event start is emitted when the macro is called and extend until the
    calling scope finalizes.
-   This is intended to be called immediately after a function starts.
-*/
+   This is intended to be called immediately after a function starts. */
 #define INSTRUMENT_FUNCTION(...)										\
 	profiler::Global<profiler::bSize>::traceMemory = false;				\
 	static uint16_t __profiler_function_id =							\
@@ -889,14 +879,12 @@ inline void operator delete(void* ptr, size_t sz)
 	profiler::ProfilerGuard guard(__profiler_function_id, 1);			\
 	profiler::Global<profiler::bSize>::traceMemory = true;
 
-/**
-   Main macro to instrument functions subsections.
+/** Main macro to instrument functions subsections.
 
-   This macro creates a new event value for the __profiler_function_id event.
-   An extra second string argument can be passed to the macro in order to set a
-   custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
-   \param VALUE the numeric value for the event.
-*/
+	This macro creates a new event value for the __profiler_function_id event.
+	An extra second string argument can be passed to the macro in order to set a
+	custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
+	@param VALUE the numeric value for the event. */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	profiler::Global<profiler::bSize>::traceMemory = false;				\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
