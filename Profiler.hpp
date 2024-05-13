@@ -325,7 +325,7 @@ namespace profiler {
 
 		struct nameEntry : public nameInfo
 		{
-			std::map<T, nameInfo> _namesValuesMap;
+			std::map<T, nameInfo> _namesValuesMap {};
 		};
 
 		T registerEventName(
@@ -805,7 +805,7 @@ inline void* operator new(size_t sz)
 	return malloc(sz);
 }
 
-inline void operator delete(void* ptr, size_t sz)
+inline void operator delete(void* ptr, size_t sz) noexcept
 {
 	free(ptr);
 	profiler::Global<profiler::bSize>::allocate<false>(sz);

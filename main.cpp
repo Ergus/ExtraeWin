@@ -29,6 +29,7 @@ void threadFuncion1(size_t id)
 	INSTRUMENT_FUNCTION();
 
 	std::vector<double> v1(1);
+	std::cout << "Start Thread threadFuncion1: " << id << std::endl;
 
 	for (size_t i = 0; i < 10; ++i) {
 		INSTRUMENT_SCOPE(10, 1 + i, "LOOP");
@@ -47,6 +48,8 @@ void threadFuncion1(size_t id)
 void threadFuncion2(size_t id)
 {
 	INSTRUMENT_FUNCTION("threadFuncion2Specified");
+
+	std::cout << "Start Thread threadFuncion2: " << id << std::endl;
 
 	INSTRUMENT_FUNCTION_UPDATE(10, "LOOP1");
 	for (size_t i = 0; i < 10; ++i) {
