@@ -264,9 +264,21 @@ namespace profiler {
 		Buffer(const Buffer &) = delete;
 		Buffer &operator=(const Buffer &) =  delete;
 
-		Buffer(uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime);
+		Buffer(
+			uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
+		) : _fileName(fileName)
+			, _header(id, tid, startGTime)
+		{
+			// Reserve memory for the buffer.
+			_entries = (EventEntry *) malloc(_maxEntries * sizeof(EventEntry));
+		}
 
-		~Buffer();
+		~Buffer()
+		{
+			flushBuffer(); // Flush all remaining events
+			free(_entries);
+			_file.close(); // close the file only at the end.
+		}
 
 		void emplaceEvent(uint16_t id, uint16_t value);
 
@@ -420,7 +432,6 @@ namespace profiler {
 		const uint64_t _tid;
 
 	public:
-		BufferSet<I> &globalBufferSet;
 		Buffer<I> &eventsBuffer;
 
 		const uint32_t _id;
@@ -518,6 +529,7 @@ namespace profiler {
 				getInfoThread().eventsBuffer.emplaceEvent(Global<I>::globalInfo.deallocationID, sz);
 		}
 
+
 		static Global globalInfo;
 		thread_local static bool traceMemory;
 
@@ -601,26 +613,6 @@ namespace profiler {
 	// ==================================================
 
 	// =================== Buffer ==============================================
-	template <size_t I>
-	Buffer<I>::Buffer(
-		uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
-	)
-		: _fileName(fileName)
-		, _header(id, tid, startGTime)
-	{
-		// Reserve memory for the buffer.
-		_entries = (EventEntry *) malloc(_maxEntries * sizeof(EventEntry));
-	}
-
-
-	template <size_t I>
-	Buffer<I>::~Buffer()
-	{
-		flushBuffer(); // Flush all remaining events
-		free(_entries);
-		_file.close(); // close the file only at the end.
-	}
-
 
 	template <size_t I>
 	void Buffer<I>::emplaceEvent(uint16_t id, uint16_t value)
@@ -633,7 +625,6 @@ namespace profiler {
 		if (_nEntries == _maxEntries)
 			flushBuffer();
 	}
-
 
 	// =================== NameSet =============================================
 	template <typename T>
@@ -649,7 +640,7 @@ namespace profiler {
 			eventName = p.filename().u8string()+":"+std::to_string(line);
 		}
 
-		nameEntry entry {eventName, fileName, line};
+		nameEntry entry = {eventName, fileName, line};
 
 		T eventRef = (event == T() ? ++_counter : event);
 
@@ -706,7 +697,7 @@ namespace profiler {
 			throw profiler_error(message);
 		}
 
-		nameEntry entry{valueName, fileName, line};
+		nameEntry entry = {valueName, fileName, line};
 		auto itValue = itEvent->second._namesValuesMap.emplace(value, entry);
 
 		// Insertion succeeded, we can return
@@ -786,7 +777,6 @@ namespace profiler {
 	template <size_t I>
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
-		, globalBufferSet(Global<I>::globalInfo._buffersSet)
 		, eventsBuffer(Global<I>::globalInfo._buffersSet.getThreadBuffer(_tid))
 		, _id(eventsBuffer._header._id)
 	{
