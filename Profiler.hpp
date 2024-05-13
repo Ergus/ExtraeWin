@@ -340,7 +340,34 @@ namespace profiler {
 			std::string name, const std::string &fileName, size_t line, T event, uint16_t value
 		);
 
-		void createPCF(const std::string &traceDirectory) const;
+		void createPCF(const std::string &traceDirectory) const
+		{
+			// PCF File
+			std::ofstream pcffile(traceDirectory + "/Trace.pcf", std::ios::out);
+
+			// Register all Events types names.
+			for (auto it : _namesEventMap)
+			{
+				const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
+
+				pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
+				pcffile << "EVENT_TYPE" << std::endl;
+				pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
+
+				// Create a "VALUES" sections if some value is registered for this event
+				if (!eventEntry._namesValuesMap.empty())
+				{
+					pcffile << "VALUES" << std::endl;
+					for (auto itValues : eventEntry._namesValuesMap)
+						pcffile << itValues.first << " "
+						        << eventEntry.name << ":" << itValues.second.name << std::endl;
+				}
+
+				pcffile << std::endl;
+
+			}
+			pcffile.close();
+		}
 
 	private:
 		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
@@ -674,9 +701,12 @@ namespace profiler {
 
 	template <typename T>
 	T NameSet<T>::registerValueName(
-		std::string valueName, const std::string &fileName, size_t line, T event, uint16_t value
-	)
-	{
+		std::string valueName,
+		const std::string &fileName,
+		size_t line,
+		T event,
+		uint16_t value
+	) {
 		assert(profiler::Global<profiler::bSize>::traceMemory == false);
 
 		if (valueName.empty())
@@ -709,36 +739,6 @@ namespace profiler {
 			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 			+ " it is already taken by '" + itValue.first->second.name;
 		throw profiler_error(message);
-	}
-
-	template <typename T>
-	void NameSet<T>::createPCF(const std::string &traceDirectory) const
-	{
-		// PCF File
-		std::ofstream pcffile(traceDirectory + "/Trace.pcf", std::ios::out);
-
-		// Register all Events types names.
-		for (auto it : _namesEventMap)
-		{
-			const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
-
-			pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
-			pcffile << "EVENT_TYPE" << std::endl;
-			pcffile << "0 " << it.first << " " << eventEntry.name << std::endl;
-
-			// Create a "VALUES" sections if some value is registered for this event
-			if (!eventEntry._namesValuesMap.empty())
-			{
-				pcffile << "VALUES" << std::endl;
-				for (auto itValues : eventEntry._namesValuesMap)
-					pcffile << itValues.first << " "
-					        << eventEntry.name << ":" << itValues.second.name << std::endl;
-			}
-
-			pcffile << std::endl;
-
-		}
-		pcffile.close();
 	}
 
 	// =================== BufferSet ===========================================
