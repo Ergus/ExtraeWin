@@ -352,12 +352,6 @@ namespace profiler {
 	   seems to be removed before the main thread completes. */
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
-		/** Static utility function to build the trace directory */
-		static std::string getTraceDirectory(uint64_t systemTimePoint);
-
-		const uint64_t _startSystemTimePoint;
-		const std::string _traceDirectory;
-
 		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<I>> _eventsMap;           /**< This map contains the relation tid->id */
 
@@ -370,6 +364,28 @@ namespace profiler {
 		BufferSet();
 
 		~BufferSet();
+
+		void createROW(const std::string &traceDirectory) const
+		{
+			const std::string hostname = getHostName();
+			const int ncores = getNumberOfCores();
+			const size_t nthreads = _tcounter - 1;
+
+			// ROW File
+			std::ofstream rowfile(traceDirectory + "/Trace.row", std::ios::out);
+
+			rowfile << "LEVEL CPU SIZE " << ncores << std::endl;
+			for (int i = 1; i <= ncores; ++i)
+				rowfile << i << "." << hostname << std::endl;
+
+			rowfile << "\nLEVEL NODE SIZE 1" << std::endl;
+			rowfile << hostname << std::endl;
+
+			rowfile << "\nLEVEL THREAD SIZE " << nthreads << std::endl;
+			for (size_t i = 1; i <= nthreads; ++i)
+				rowfile << "THREAD 1.1." << i << std::endl;
+			rowfile.close();
+		}
 
 
 		/** Get the Buffer_t associated with a thread id hash
@@ -440,6 +456,16 @@ namespace profiler {
 		deletion. */
 	template <size_t I>
 	class Global {
+		/** Static utility function to build the trace directory */
+		static std::string getTraceDirectory(uint64_t systemTimePoint)
+		{
+			assert(traceMemory == false);
+			const time_t localTime = static_cast<time_t>(systemTimePoint);
+
+			std::stringstream ss;
+			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
+			return ss.str();
+		}
 
 	public:
 
@@ -451,7 +477,14 @@ namespace profiler {
 		}
 
 		Global()
+			: startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
+			, traceDirectory(getTraceDirectory(startSystemTimePoint))
+
 		{
+			// Create the directory
+			if (!std::filesystem::create_directory(traceDirectory))
+				throw profiler_error("Cannot create traces directory: " + traceDirectory);
+
 			// Make just a trivial check to force the first access to the
 			// _singletonThread construct it at the very beginning.  This is
 			// because the thread-local variables are constructed on demand, but
@@ -468,9 +501,15 @@ namespace profiler {
 		~Global()
 		{
 			kill_pool(); // kills the thread pool when needed.
-			profiler::Global<I>::traceMemory = false;
+			Global<I>::traceMemory = false;
 
 			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 0);
+
+			_singleton.createROW(traceDirectory);
+
+			_singleton.eventsNames.createPCF(traceDirectory);
+
+			std::cout << "# Profiler TraceDir: " << traceDirectory << std::endl;
 		}
 
 		template <bool ALLOC>
@@ -479,17 +518,20 @@ namespace profiler {
 			if (!traceMemory)
 				return;
 
-			valueGuard guard(profiler::Global<I>::traceMemory, false);
+			valueGuard guard(Global<I>::traceMemory, false);
 			if constexpr (ALLOC)
 				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.allocationID, sz);
 			else
 				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.deallocationID, sz);
 		}
 
+		const uint64_t startSystemTimePoint;
 		static Global globalInfo;
 		thread_local static bool traceMemory;
 
 		BufferSet<I> _singleton;
+
+		const std::string traceDirectory;
 	};
 
 	/** Set the trace memory to false by when thread initialize.
@@ -720,45 +762,18 @@ namespace profiler {
 	// =================== BufferSet ===========================================
 	template <size_t I>
 	BufferSet<I>::BufferSet()
-		: _startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
-		, _traceDirectory(getTraceDirectory(_startSystemTimePoint))
-		, eventsNames()
+		: eventsNames()
 		, threadEventID(eventsNames.registerEventName("ThreadRunning"))
 		, allocationID(eventsNames.registerEventName("allocation"))
 		, deallocationID(eventsNames.registerEventName("deallocation"))
 	{
-		// Create the directory
-		if (!std::filesystem::create_directory(_traceDirectory))
-			throw profiler_error("Cannot create traces directory: " + _traceDirectory);
 	}
 
 
 	template <size_t I>
 	BufferSet<I>::~BufferSet()
 	{
-		const std::string hostname = getHostName();
-		const int ncores = getNumberOfCores();
-		const size_t nthreads = _tcounter - 1;
-
-		// ROW File
-		std::ofstream rowfile(_traceDirectory + "/Trace.row", std::ios::out);
-
-		rowfile << "LEVEL CPU SIZE " << ncores << std::endl;
-		for (int i = 1; i <= ncores; ++i)
-			rowfile << i << "." << hostname << std::endl;
-
-		rowfile << "\nLEVEL NODE SIZE 1" << std::endl;
-		rowfile << hostname << std::endl;
-
-		rowfile << "\nLEVEL THREAD SIZE " << nthreads << std::endl;
-		for (size_t i = 1; i <= nthreads; ++i)
-			rowfile << "THREAD 1.1." << i << std::endl;
-		rowfile.close();
-
 		// PCF File
-		eventsNames.createPCF(_traceDirectory);
-
-		std::cout << "# Profiler TraceDir: " << _traceDirectory << std::endl;
 	}
 
 	template <size_t I>
@@ -782,23 +797,13 @@ namespace profiler {
 		std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
 
 		const std::string filename
-			= _traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
+			= Global<I>::globalInfo.traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
-		it = _eventsMap.try_emplace(it, tid, _tcounter++, tid, filename, _startSystemTimePoint);
+		it = _eventsMap.try_emplace(
+			it, tid, _tcounter++, tid, filename, Global<I>::globalInfo.startSystemTimePoint
+		);
 
 		return it->second;
-	}
-
-
-	template <size_t I>
-	std::string BufferSet<I>::getTraceDirectory(uint64_t systemTimePoint)
-	{
-		assert(profiler::Global<I>::traceMemory == false);
-		const time_t localTime = static_cast<time_t>(systemTimePoint);
-
-		std::stringstream ss;
-		ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
-		return ss.str();
 	}
 
 	// =================== InfoThread ==========================================
@@ -806,7 +811,7 @@ namespace profiler {
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, globalBufferSet(Global<I>::globalInfo._singleton)
-		, eventsBuffer(globalBufferSet.getThreadBuffer(_tid))
+		, eventsBuffer(Global<I>::globalInfo._singleton.getThreadBuffer(_tid))
 		, _id(eventsBuffer._header._id)
 	{
 		assert(_tid == eventsBuffer._header._tid);
