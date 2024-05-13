@@ -220,7 +220,6 @@ namespace profiler {
 			}
 		};
 
-
 		/** Maximum size for the buffers = 1Mb */
 		static constexpr size_t _maxEntries = ( I + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);
 
@@ -481,7 +480,7 @@ namespace profiler {
 		This gives access to the thread and global static variables. And only
 		holds one pointer to the BufferSet object to avoid its premature
 		deletion. */
-	template <size_t I>
+	template <size_t I = profiler::bSize>
 	class Global {
 		/** Static utility function to build the trace directory */
 		static std::string getTraceDirectory(uint64_t systemTimePoint)
@@ -498,7 +497,7 @@ namespace profiler {
 
 		static InfoThread<I> &getInfoThread()
 		{
-			assert (profiler::Global<I>::traceMemory == false);
+			assert(traceMemory == false);
 			thread_local static InfoThread<I> threadInfo;
 			return threadInfo;
 		}
@@ -526,13 +525,13 @@ namespace profiler {
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 1);
 
-			profiler::Global<I>::traceMemory = true;
+			traceMemory = true;
 		}
 
 		~Global()
 		{
 			kill_pool(); // kills the thread pool when needed.
-			Global<I>::traceMemory = false;
+			traceMemory = false;
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 0);
 
@@ -549,11 +548,11 @@ namespace profiler {
 			if (!traceMemory)
 				return;
 
-			valueGuard guard(Global<I>::traceMemory, false);
+			valueGuard guard(traceMemory, false);
 			if constexpr (ALLOC)
-				getInfoThread().eventsBuffer.emplaceEvent(Global<I>::globalInfo.allocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo.allocationID, sz);
 			else
-				getInfoThread().eventsBuffer.emplaceEvent(Global<I>::globalInfo.deallocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(globalInfo.deallocationID, sz);
 		}
 
 
@@ -593,7 +592,7 @@ namespace profiler {
 		const std::string &fileName, size_t line,
 		uint16_t event, uint16_t value
 	) {
-		assert (profiler::Global<profiler::bSize>::traceMemory == false);
+		assert (Global<profiler::bSize>::traceMemory == false);
 
 		if (value == 0)
 			return Global<profiler::bSize>::globalInfo._namesSet.registerEventName(name, fileName, line, event);
@@ -608,7 +607,7 @@ namespace profiler {
 		RAII. This simplifies instrumentation on the user side and may rely on
 		the instrumentation macro.  The constructor emits an event that will be
 		paired with the equivalent one emitted in the destructor. */
-	template<size_t I = bSize>	 //< Maximum size for the buffers ~ 1Mb
+	template <size_t I = profiler::bSize>
 	class ProfilerGuard {
 		const uint16_t _id;  //< Event id for this guard. remembered to emit on the destructor
 
@@ -629,7 +628,7 @@ namespace profiler {
 		//! Guard destructor
 		~ProfilerGuard()
 		{
-			valueGuard guard(profiler::Global<I>::traceMemory, false);
+			valueGuard guard(Global<I>::traceMemory, false);
 			Global<I>::getInfoThread().eventsBuffer.emplaceEvent(_id, 0);
 		}
 
@@ -644,7 +643,7 @@ namespace profiler {
 	template <size_t I>
 	void Buffer<I>::emplaceEvent(uint16_t id, uint16_t value)
 	{
-		assert(profiler::Global<I>::traceMemory == false);
+		assert(Global<I>::traceMemory == false);
 
 		new (&_entries[_nEntries++]) EventEntry(id, value);
 
@@ -659,7 +658,7 @@ namespace profiler {
 		std::string eventName, const std::string &fileName, size_t line, T event
 	) 
 	{
-		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(Global<profiler::bSize>::traceMemory == false);
 
 		if (eventName.empty())
 		{
@@ -707,7 +706,7 @@ namespace profiler {
 		T event,
 		uint16_t value
 	) {
-		assert(profiler::Global<profiler::bSize>::traceMemory == false);
+		assert(Global<profiler::bSize>::traceMemory == false);
 
 		if (valueName.empty())
 		{
@@ -831,11 +830,11 @@ inline void operator delete(void* ptr, size_t sz)
    Similar to instrument function, but requires more parameters. This can be
    nested inside functions to generate independent events. */
 #define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
-	profiler::Global<profiler::bSize>::traceMemory = false;				\
+	profiler::Global<>::traceMemory = false;				\
 	static uint16_t CAT(__profiler_id_,EVENT) =							\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT, 0); \
-	profiler::ProfilerGuard guard(CAT(__profiler_id_,EVENT), VALUE);	\
-	profiler::Global<profiler::bSize>::traceMemory = true;
+	profiler::ProfilerGuard<> guard(CAT(__profiler_id_,EVENT), VALUE);	\
+	profiler::Global<>::traceMemory = true;
 
 /** Main macro to instrument functions.
 
@@ -844,11 +843,11 @@ inline void operator delete(void* ptr, size_t sz)
    calling scope finalizes.
    This is intended to be called immediately after a function starts. */
 #define INSTRUMENT_FUNCTION(...)										\
-	profiler::Global<profiler::bSize>::traceMemory = false;				\
+	profiler::Global<>::traceMemory = false;				\
 	static uint16_t __profiler_function_id =							\
 		profiler::registerName(std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
-	profiler::ProfilerGuard guard(__profiler_function_id, 1);			\
-	profiler::Global<profiler::bSize>::traceMemory = true;
+	profiler::ProfilerGuard<> guard(__profiler_function_id, 1);			\
+	profiler::Global<>::traceMemory = true;
 
 /** Main macro to instrument functions subsections.
 
@@ -857,13 +856,13 @@ inline void operator delete(void* ptr, size_t sz)
 	custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
 	@param VALUE the numeric value for the event. */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
-	profiler::Global<profiler::bSize>::traceMemory = false;				\
+	profiler::Global<>::traceMemory = false;				\
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<profiler::bSize>::getInfoThread().eventsBuffer.emplaceEvent(\
+	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(\
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
 	);																	\
-	profiler::Global<profiler::bSize>::traceMemory = true;
+	profiler::Global<>::traceMemory = true;
 
 //!@}
 
