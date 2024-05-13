@@ -361,10 +361,6 @@ namespace profiler {
 
 	public:
 
-		BufferSet();
-
-		~BufferSet();
-
 		void createROW(const std::string &traceDirectory) const
 		{
 			const std::string hostname = getHostName();
@@ -407,13 +403,6 @@ namespace profiler {
 		   map, construct the Buffer and assign an ordinal id for it.  Any
 		   optimization here will be very welcome. */
 		Buffer<I> &getThreadBuffer(size_t tid);
-
-		// Events names register
-		NameSet<uint16_t> eventsNames;
-
-		const uint16_t threadEventID;
-		const uint16_t allocationID;
-		const uint16_t deallocationID;
 
 	}; // BufferSet
 
@@ -479,7 +468,11 @@ namespace profiler {
 		Global()
 			: startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
 			, traceDirectory(getTraceDirectory(startSystemTimePoint))
-
+			, _singleton()
+			, eventsNames()
+			, threadEventID(eventsNames.registerEventName("ThreadRunning"))
+			, allocationID(eventsNames.registerEventName("allocation"))
+			, deallocationID(eventsNames.registerEventName("deallocation"))
 		{
 			// Create the directory
 			if (!std::filesystem::create_directory(traceDirectory))
@@ -493,7 +486,7 @@ namespace profiler {
 			if (getInfoThread().eventsBuffer._header._id != 1)
 				throw profiler_error("Master is not running in the first thread");
 
-			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 1);
+			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 1);
 
 			profiler::Global<I>::traceMemory = true;
 		}
@@ -503,11 +496,11 @@ namespace profiler {
 			kill_pool(); // kills the thread pool when needed.
 			Global<I>::traceMemory = false;
 
-			getInfoThread().eventsBuffer.emplaceEvent(_singleton.threadEventID, 0);
+			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 0);
 
 			_singleton.createROW(traceDirectory);
 
-			_singleton.eventsNames.createPCF(traceDirectory);
+			eventsNames.createPCF(traceDirectory);
 
 			std::cout << "# Profiler TraceDir: " << traceDirectory << std::endl;
 		}
@@ -520,18 +513,24 @@ namespace profiler {
 
 			valueGuard guard(Global<I>::traceMemory, false);
 			if constexpr (ALLOC)
-				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.allocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(Global<I>::globalInfo.allocationID, sz);
 			else
-				getInfoThread().eventsBuffer.emplaceEvent(globalInfo._singleton.deallocationID, sz);
+				getInfoThread().eventsBuffer.emplaceEvent(Global<I>::globalInfo.deallocationID, sz);
 		}
 
-		const uint64_t startSystemTimePoint;
 		static Global globalInfo;
 		thread_local static bool traceMemory;
 
-		BufferSet<I> _singleton;
-
+		const uint64_t startSystemTimePoint;
 		const std::string traceDirectory;
+
+		BufferSet<I> _singleton;                // Buffers register
+		NameSet<uint16_t> eventsNames; 		// Events names register
+
+		const uint16_t threadEventID;
+		const uint16_t allocationID;
+		const uint16_t deallocationID;
+
 	};
 
 	/** Set the trace memory to false by when thread initialize.
@@ -554,21 +553,13 @@ namespace profiler {
 		const std::string &name,
 		const std::string &fileName, size_t line,
 		uint16_t event, uint16_t value
-	)
-	
-	{
-		assert (profiler::Global<profiler::bSize>::traceMemory == false);
-
-		// This call can set the traceMemory to true (the first time it is
-		// called in a different thread), that;s why we need the guard latter
-		InfoThread<profiler::bSize> &threadInfo = Global<profiler::bSize>::getInfoThread();
-
+	) {
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
 		if (value == 0)
-			return threadInfo.globalBufferSet.eventsNames.registerEventName(name, fileName, line, event);
+			return Global<profiler::bSize>::globalInfo.eventsNames.registerEventName(name, fileName, line, event);
 		else
-			return threadInfo.globalBufferSet.eventsNames.registerValueName(name, fileName, line, event, value);
+			return Global<profiler::bSize>::globalInfo.eventsNames.registerValueName(name, fileName, line, event, value);
 	}
 
 
@@ -760,21 +751,6 @@ namespace profiler {
 	}
 
 	// =================== BufferSet ===========================================
-	template <size_t I>
-	BufferSet<I>::BufferSet()
-		: eventsNames()
-		, threadEventID(eventsNames.registerEventName("ThreadRunning"))
-		, allocationID(eventsNames.registerEventName("allocation"))
-		, deallocationID(eventsNames.registerEventName("deallocation"))
-	{
-	}
-
-
-	template <size_t I>
-	BufferSet<I>::~BufferSet()
-	{
-		// PCF File
-	}
 
 	template <size_t I>
 	Buffer<I> &BufferSet<I>::getThreadBuffer(size_t tid)
@@ -816,7 +792,7 @@ namespace profiler {
 	{
 		assert(_tid == eventsBuffer._header._tid);
 		if (_id > 1)
-			eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 1);
+			eventsBuffer.emplaceEvent(Global<I>::globalInfo.threadEventID, 1);
 	}
 
 	template <size_t I>
@@ -824,9 +800,9 @@ namespace profiler {
 	{
 		// This is the thread destructor, so, no allocation events must be
 		// reported after this.
-		profiler::Global<I>::traceMemory = false;
+		Global<I>::traceMemory = false;
 		if (_id > 1)
-			eventsBuffer.emplaceEvent(globalBufferSet.threadEventID, 0);
+			eventsBuffer.emplaceEvent(Global<I>::globalInfo.threadEventID, 0);
 	}
 
 
