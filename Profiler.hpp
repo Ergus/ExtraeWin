@@ -468,11 +468,11 @@ namespace profiler {
 		Global()
 			: startSystemTimePoint(std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()).time_since_epoch().count())
 			, traceDirectory(getTraceDirectory(startSystemTimePoint))
-			, _singleton()
-			, eventsNames()
-			, threadEventID(eventsNames.registerEventName("ThreadRunning"))
-			, allocationID(eventsNames.registerEventName("allocation"))
-			, deallocationID(eventsNames.registerEventName("deallocation"))
+			, _buffersSet()
+			, _namesSet()
+			, threadEventID(_namesSet.registerEventName("ThreadRunning"))
+			, allocationID(_namesSet.registerEventName("allocation"))
+			, deallocationID(_namesSet.registerEventName("deallocation"))
 		{
 			// Create the directory
 			if (!std::filesystem::create_directory(traceDirectory))
@@ -498,9 +498,9 @@ namespace profiler {
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 0);
 
-			_singleton.createROW(traceDirectory);
+			_buffersSet.createROW(traceDirectory);
 
-			eventsNames.createPCF(traceDirectory);
+			_namesSet.createPCF(traceDirectory);
 
 			std::cout << "# Profiler TraceDir: " << traceDirectory << std::endl;
 		}
@@ -524,8 +524,8 @@ namespace profiler {
 		const uint64_t startSystemTimePoint;
 		const std::string traceDirectory;
 
-		BufferSet<I> _singleton;                // Buffers register
-		NameSet<uint16_t> eventsNames; 		// Events names register
+		BufferSet<I> _buffersSet;                // Buffers register
+		NameSet<uint16_t> _namesSet; 		// Events names register
 
 		const uint16_t threadEventID;
 		const uint16_t allocationID;
@@ -557,9 +557,9 @@ namespace profiler {
 		assert (profiler::Global<profiler::bSize>::traceMemory == false);
 
 		if (value == 0)
-			return Global<profiler::bSize>::globalInfo.eventsNames.registerEventName(name, fileName, line, event);
+			return Global<profiler::bSize>::globalInfo._namesSet.registerEventName(name, fileName, line, event);
 		else
-			return Global<profiler::bSize>::globalInfo.eventsNames.registerValueName(name, fileName, line, event, value);
+			return Global<profiler::bSize>::globalInfo._namesSet.registerValueName(name, fileName, line, event, value);
 	}
 
 
@@ -786,8 +786,8 @@ namespace profiler {
 	template <size_t I>
 	InfoThread<I>::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
-		, globalBufferSet(Global<I>::globalInfo._singleton)
-		, eventsBuffer(Global<I>::globalInfo._singleton.getThreadBuffer(_tid))
+		, globalBufferSet(Global<I>::globalInfo._buffersSet)
+		, eventsBuffer(Global<I>::globalInfo._buffersSet.getThreadBuffer(_tid))
 		, _id(eventsBuffer._header._id)
 	{
 		assert(_tid == eventsBuffer._header._tid);
