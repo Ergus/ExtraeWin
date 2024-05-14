@@ -21,15 +21,25 @@ jobs:
         config:
         - {os: ubuntu-latest, cc: "gcc", cxx: "g++"}
         - {os: ubuntu-latest, cc: "clang", cxx: "clang++"}
-        - {os: macos-latest, cc: "clang", cxx: "clang++"}
         - {os: windows-latest, cc: "cl", cxx: "cl"}
+        #- {os: macos-latest, cc: "clang", cxx: "clang++"}
 
     steps:
       - uses: actions/checkout@v2
 
-      - if: matrix.os != 'windows-latest'
-        name: Install TBB
+      - name: Prints
+        run: |
+             echo ${{ matrix.config.cc }}
+             echo ${{ matrix.config.os }}
+             gcc -v
+
+      - name: Install TBB Linux
+        if: matrix.config.os == 'ubuntu-latest'
         run: sudo apt install libtbb-dev
+
+      # - name: Install TBB MacOS
+      #   if: matrix.config.os == 'macos-latest'
+      #   run: brew install tbb
 
       - name: Info
         run: echo ${{ github.ref }}

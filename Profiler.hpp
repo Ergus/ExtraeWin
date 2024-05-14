@@ -67,6 +67,8 @@ namespace {
 #include <oneapi/tbb/global_control.h>
 #endif
 
+#include <oneapi/tbb/global_control.h>
+
 namespace {
 
 	inline int getNumberOfCores() {
