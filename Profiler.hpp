@@ -54,7 +54,7 @@ namespace {
 	}
 
 	// In MSWindows this seems possible, but unneeded.
-	inline void kill_pool()
+	inline void killPool()
 	{
 	}
 }
@@ -95,7 +95,7 @@ namespace {
 	}
 
 	// function to kill tbb thread-pool on linux.
-	inline void kill_pool()
+	inline void killPool()
 	{
 		// In principle this works with clang and gcc... still need to check intel compiler
 		#ifdef _PSTL_PAR_BACKEND_TBB
@@ -538,7 +538,7 @@ namespace profiler {
 
 		~Global()
 		{
-			kill_pool(); // kills the thread pool when needed.
+			killPool(); // kills the thread pool when needed.
 			traceMemory = false;
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 0);
