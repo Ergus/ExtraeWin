@@ -263,7 +263,7 @@ namespace profiler {
 		// No copy
 		Buffer(Buffer &&) = delete;
 		Buffer(const Buffer &) = delete;
-		Buffer &operator=(const Buffer &) =  delete;
+		Buffer &operator=(const Buffer &) = delete;
 
 		Buffer(
 			uint32_t id, uint64_t tid, const std::string &fileName, uint64_t startGTime
@@ -326,16 +326,15 @@ namespace profiler {
 			}
 		};
 
+		struct nameEntry : public nameInfo
+		{
+			std::map<T, nameInfo> _namesValuesMap {};
+		};
 
 	public:
 		#undef max
 		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
 		static constexpr T maxEvent = std::numeric_limits<T>::max();
-
-		struct nameEntry : public nameInfo
-		{
-			std::map<T, nameInfo> _namesValuesMap {};
-		};
 
 		T registerEventName(
 			std::string name,
@@ -356,7 +355,7 @@ namespace profiler {
 			// Register all Events types names.
 			for (auto it : _namesEventMap)
 			{
-				const NameSet<uint16_t>::nameEntry &eventEntry = it.second;
+				const nameEntry &eventEntry = it.second;
 
 				pcffile << "# " << eventEntry.fileName << ":" <<  eventEntry.line << std::endl;
 				pcffile << "EVENT_TYPE" << std::endl;
@@ -399,10 +398,10 @@ namespace profiler {
 	   seems to be removed before the main thread completes. */
 	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
-		std::shared_mutex _mapMutex;                                 /**< mutex needed to access the _eventsMap */
+		std::shared_mutex _mapMutex;                      /**< mutex needed to access the _eventsMap */
 		std::map<size_t, Buffer<I>> _eventsMap;           /**< This map contains the relation tid->id */
 
-		uint32_t _tcounter = 1;                                      /**< tid counter always > 0 */
+		uint32_t _tcounter = 1;                           /**< tid counter always > 0 */
 
 		friend uint16_t registerName(const std::string &name, uint16_t value);
 
@@ -609,7 +608,6 @@ namespace profiler {
 			return Global<profiler::bSize>::globalInfo._namesSet.registerValueName(name, fileName, line, event, value);
 	}
 
-
 	/** Guard class (more info in the constructor docstring).
 
 		This is a tricky variable to rely event pairs emission (start-end) with
@@ -651,8 +649,7 @@ namespace profiler {
 	template <typename T>
 	T NameSet<T>::registerEventName(
 		std::string eventName, const std::string &fileName, size_t line, T event
-	) 
-	{
+	) {
 		assert(Global<profiler::bSize>::traceMemory == false);
 
 		if (eventName.empty())
@@ -740,7 +737,7 @@ namespace profiler {
 	template <size_t I>
 	Buffer<I> &BufferSet<I>::getThreadBuffer(size_t tid)
 	{
-		// We attempt to tale the read lock first. If this tid was
+		// We attempt to take the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
 		// don't need the exclusive access.
 		std::shared_lock sharedlock(_mapMutex);
