@@ -281,7 +281,14 @@ namespace profiler {
 			_file.close(); // close the file only at the end.
 		}
 
-		void emplaceEvent(uint16_t id, uint16_t value);
+		void emplaceEvent(uint16_t id, uint16_t value)
+		{
+			new (&_entries[_nEntries++]) EventEntry(id, value);
+
+			assert(_nEntries <= _maxEntries);
+			if (_nEntries == _maxEntries)
+				flushBuffer();
+		}
 
 		TraceHeader _header;
 
@@ -639,20 +646,6 @@ namespace profiler {
 	// ==================================================
 	// Outline function definitions.
 	// ==================================================
-
-	// =================== Buffer ==============================================
-
-	template <size_t I>
-	void Buffer<I>::emplaceEvent(uint16_t id, uint16_t value)
-	{
-		assert(Global<I>::traceMemory == false);
-
-		new (&_entries[_nEntries++]) EventEntry(id, value);
-
-		assert(_nEntries <= _maxEntries);
-		if (_nEntries == _maxEntries)
-			flushBuffer();
-	}
 
 	// =================== NameSet =============================================
 	template <typename T>
