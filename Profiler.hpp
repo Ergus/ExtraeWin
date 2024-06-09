@@ -162,10 +162,10 @@ namespace profiler {
 	constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes (1Mb)
 
 	/** Custom error class to handle them if needed. */
-	class profiler_error : public std::exception {
+	class profilerError : public std::exception {
 		const std::string message;
     public:
-		explicit profiler_error(const std::string &msg)
+		explicit profilerError(const std::string &msg)
 			: message("Profiler error: " + msg) {}
 
 		const char *what () const throw ()
@@ -521,7 +521,7 @@ namespace profiler {
 		{
 			// Create the directory
 			if (!std::filesystem::create_directory(traceDirectory))
-				throw profiler_error("Cannot create traces directory: " + traceDirectory);
+				throw profilerError("Cannot create traces directory: " + traceDirectory);
 
 			// Make just a trivial check to force the first access to the
 			// _singletonThread construct it at the very beginning.  This is
@@ -529,7 +529,7 @@ namespace profiler {
 			// the static are built before main (eagerly) So we need to do this
 			// to compute the real execution time.
 			if (getInfoThread().eventsBuffer._header._id != 1)
-				throw profiler_error("Master is not running in the first thread");
+				throw profilerError("Master is not running in the first thread");
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 1);
 
@@ -678,13 +678,13 @@ namespace profiler {
 				= "Cannot register event: '" + eventName
 				+ "' with id: " + std::to_string(event)
 				+ " the id is already taken by: '" + std::string(eventInside) + "'";
-			throw profiler_error(message);
+			throw profilerError(message);
 		}
 
 		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
 			// If counter goes to zero there is overflow, so, no empty places.
 			if (_counter == maxEvent)
-				throw profiler_error("Profiler cannot register event: " + eventName);
+				throw profilerError("Profiler cannot register event: " + eventName);
 		}
 
 		return eventRef;
@@ -715,7 +715,7 @@ namespace profiler {
 				= "Cannot register event value: '" + valueName
 				+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 				+ " the event ID does not exist.";
-			throw profiler_error(message);
+			throw profilerError(message);
 		}
 
 		nameEntry entry = {valueName, fileName, line};
@@ -729,7 +729,7 @@ namespace profiler {
 			= "Cannot cannot register event value: '" + valueName
 			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
 			+ " it is already taken by '" + itValue.first->second.name;
-		throw profiler_error(message);
+		throw profilerError(message);
 	}
 
 	// =================== BufferSet ===========================================
