@@ -19,13 +19,13 @@ jobs:
       fail-fast: false
       matrix:
         config:
-        - {os: ubuntu-latest, cc: "gcc", cxx: "g++"}
-        - {os: ubuntu-latest, cc: "clang", cxx: "clang++"}
+        - {os: ubuntu-24.04, cc: "gcc", cxx: "g++"}
+        - {os: ubuntu-24.04, cc: "clang", cxx: "clang++"}
         - {os: windows-latest, cc: "cl", cxx: "cl"}
         #- {os: macos-latest, cc: "clang", cxx: "clang++"}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Prints
         run: |
@@ -34,7 +34,7 @@ jobs:
              gcc -v
 
       - name: Install TBB Linux
-        if: matrix.config.os == 'ubuntu-latest'
+        if: matrix.config.os == 'ubuntu-24.04'
         run: sudo apt install libtbb-dev
 
       # - name: Install TBB MacOS
