@@ -858,10 +858,10 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 
 //!@}
 
-#else
+#else // PROFILER_ENABLED
 
 #define INSTRUMENT_SCOPE(...)
 #define INSTRUMENT_FUNCTION(...)
 #define INSTRUMENT_FUNCTION_UPDATE(...)
 
-#endif //
+#endif // PROFILER_ENABLED
