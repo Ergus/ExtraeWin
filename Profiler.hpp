@@ -188,9 +188,9 @@ namespace profiler {
 			the head of the file to read it latter. */
 		struct TraceHeader {
 			const uint32_t _id;   // Can be ThreadID
+			uint32_t _totalFlushed {0};
 			const uint64_t _tid;
 			uint64_t _startGTime;    /**< Start global time >*/
-			uint32_t _totalFlushed {0};
 
 			TraceHeader(uint32_t id, uint64_t tid, uint64_t startGTime)
 				: _id(id), _tid(tid), _startGTime(startGTime)
