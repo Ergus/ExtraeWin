@@ -833,10 +833,14 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    calling scope finalizes.
    This is intended to be called immediately after a function starts. */
 #define INSTRUMENT_FUNCTION(...)										\
-	profiler::Global<>::traceMemory = false;				\
+    profiler::Global<>::traceMemory = false;				            \
+	static std::string __profiler_function_name =                       \
+		std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__); \
 	static uint16_t __profiler_function_id =							\
-		profiler::registerName(std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
-	profiler::ProfilerGuard<> __guard(__profiler_function_id, 1);			\
+		profiler::registerName(__profiler_function_name, __FILE__, __LINE__, 0, 0);  \
+    static uint16_t CAT(__profiler_function_,__LINE__) =				\
+        profiler::registerName(__profiler_function_name, __FILE__, __LINE__, __profiler_function_id, 1); \
+	profiler::ProfilerGuard<> __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));		\
 	profiler::Global<>::traceMemory = true;
 
 /** Main macro to instrument functions subsections.
