@@ -658,34 +658,20 @@ namespace profiler {
 
 		nameEntry entry = {eventName, fileName, line};
 
-		T eventRef = (event == T() ? ++_counter : event);
+		if (event == T())
+			event = ++_counter;
 
 		std::lock_guard<std::mutex> lk(_namesMutex);
-		auto it_pair = _namesEventMap.emplace(eventRef, entry);
+		auto it_pair = _namesEventMap.emplace(event, entry);
 
-		if (it_pair.second == true)
-			return eventRef;
+		if (it_pair.second)
+			return event;
 
-		typename std::map<T, nameEntry>::iterator it = it_pair.first;
-
-		// When the event number was specified we fail if the insertion failed
-		if (event != T()) {
-			const nameInfo &eventInside = it->second;
-
-			const std::string message
-				= "Cannot register event: '" + eventName
-				+ "' with id: " + std::to_string(event)
-				+ " the id is already taken by: '" + std::string(eventInside) + "'";
-			throw profilerError(message);
-		}
-
-		while ((it = _namesEventMap.emplace_hint(it, ++_counter, entry))->second != entry) {
-			// If counter goes to zero there is overflow, so, no empty places.
-			if (_counter == maxEvent)
-				throw profilerError("Profiler cannot register event: " + eventName);
-		}
-
-		return eventRef;
+		const std::string message
+			= "Cannot register event: '" + eventName
+			+ "' with id: " + std::to_string(event)
+			+ " the id is already taken by: '" + std::string(it_pair.first->second) + "'";
+		throw profilerError(message);
 	}
 
 	template <typename T>
