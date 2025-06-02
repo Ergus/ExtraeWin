@@ -703,16 +703,16 @@ namespace profiler {
 		}
 
 		nameEntry entry = {valueName, fileName, line};
-		auto itValue = itEvent->second._namesValuesMap.emplace(value, entry);
+		auto it_pair = itEvent->second._namesValuesMap.emplace(value, entry);
 
 		// Insertion succeeded, we can return
-		if (itValue.second)
-			return event;
+		if (it_pair.second)
+			return value;
 
 		const std::string message
 			= "Cannot cannot register event value: '" + valueName
 			+ "' with id: " + std::to_string(event) + ":" + std::to_string(value)
-			+ " it is already taken by '" + itValue.first->second.name;
+			+ " it is already taken by '" + it_pair.first->second.name + "'";
 		throw profilerError(message);
 	}
 
