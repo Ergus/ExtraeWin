@@ -67,8 +67,6 @@ namespace {
 #include <oneapi/tbb/global_control.h>
 #endif
 
-#include <oneapi/tbb/global_control.h>
-
 namespace {
 
 	inline int getNumberOfCores() {
@@ -655,7 +653,7 @@ namespace profiler {
 		if (eventName.empty())
 		{
 			std::filesystem::path p(fileName);
-			eventName = p.filename().u8string()+":"+std::to_string(line);
+			eventName = p.filename().string()+":"+std::to_string(line);
 		}
 
 		nameEntry entry = {eventName, fileName, line};
@@ -703,7 +701,7 @@ namespace profiler {
 		if (valueName.empty())
 		{
 			std::filesystem::path p(fileName);
-			valueName = p.filename().u8string()+":"+std::to_string(line);
+			valueName = p.filename().string()+":"+std::to_string(line);
 		}
 
 		std::lock_guard<std::mutex> lk(_namesMutex);
