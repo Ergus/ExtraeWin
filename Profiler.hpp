@@ -835,7 +835,9 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	profiler::Global<>::traceMemory = true;
 
 #define INSTRUMENT_EVENT(ID, VALUE) \
-    profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(ID, VALUE);
+	profiler::Global<>::traceMemory = false;				            \
+	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(ID, VALUE); \
+	profiler::Global<>::traceMemory = true;				            \
 
 /** Main macro to instrument functions subsections.
 
