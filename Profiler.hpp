@@ -836,7 +836,7 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	profiler::Global<>::traceMemory = false;				\
 	static uint16_t __profiler_function_id =							\
 		profiler::registerName(std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__), __FILE__, __LINE__, 0, 0); \
-	profiler::ProfilerGuard<> guard(__profiler_function_id, 1);			\
+	profiler::ProfilerGuard<> __guard(__profiler_function_id, 1);			\
 	profiler::Global<>::traceMemory = true;
 
 /** Main macro to instrument functions subsections.
