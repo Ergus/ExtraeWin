@@ -2,6 +2,9 @@
 
 #if PROFILER_ENABLED > 0
 
+#define SNDEBUG NDEBUG
+#undef NDEBUG
+
 #include <iostream>
 #include <string.h>
 #include <vector>
@@ -243,6 +246,7 @@ namespace profiler {
 				_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
 			}
 
+			std::cout << "# Flushed: " << _fileName << " << " << _header._totalFlushed << " + " << _nEntries << std::endl;
 			_header._totalFlushed += _nEntries;
 
 			// Go to beginning and write the header
@@ -270,6 +274,7 @@ namespace profiler {
 		{
 			// Reserve memory for the buffer.
 			_entries = (EventEntry *) malloc(_maxEntries * sizeof(EventEntry));
+			assert(_entries);
 		}
 
 		~Buffer()
@@ -829,6 +834,9 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	profiler::ProfilerGuard<> __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));		\
 	profiler::Global<>::traceMemory = true;
 
+#define INSTRUMENT_EVENT(ID, VALUE) \
+    profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(ID, VALUE);
+
 /** Main macro to instrument functions subsections.
 
 	This macro creates a new event value for the __profiler_function_id event.
@@ -836,15 +844,17 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
 	@param VALUE the numeric value for the event. */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
-	profiler::Global<>::traceMemory = false;				\
+	profiler::Global<>::traceMemory = false;				            \
 	static uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
-	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(\
+	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(      \
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
-	);																	\
+		);															    \
 	profiler::Global<>::traceMemory = true;
 
 //!@}
+
+#define NDEBUG SNDEBUG
 
 #else // PROFILER_ENABLED
 
