@@ -521,6 +521,7 @@ namespace profiler {
 			, threadEventID(_namesSet.registerEventName("ThreadRunning"))
 			, allocationID(_namesSet.registerEventName("allocation"))
 			, deallocationID(_namesSet.registerEventName("deallocation"))
+			, mutexID(_namesSet.registerEventName("mutex"))
 		{
 			// Create the directory
 			if (!std::filesystem::create_directory(traceDirectory))
@@ -579,6 +580,7 @@ namespace profiler {
 		const uint16_t threadEventID;
 		const uint16_t allocationID;
 		const uint16_t deallocationID;
+		const uint16_t mutexID;
 
 	};
 
@@ -659,17 +661,15 @@ namespace profiler {
 	public:
 		constexpr mutex() noexcept
 		{
+			valueGuard memguard(profiler::Global<>::traceMemory, false);
 			unsigned char expected = 0;
 			// Globals: 0 = no initialized, 1 = initialization in progress, 2 = already initialized
 			if (registered.compare_exchange_strong(expected, 1)) {
-				bool tmp = profiler::Global<>::traceMemory;
-				profiler::Global<>::traceMemory = false;
 
-				instrument_mutex_id = profiler::registerName("Mutex", "", 0, 0, 0);
-				[[maybe_unused]] uint16_t wait_value = profiler::registerName("Waiting", "", 0, instrument_mutex_id, instrument_waiting);
-				assert(instrument_waiting == wait_value);
+				[[maybe_unused]] uint16_t wait_value
+					= registerName("Waiting", "", 0, Global<>::globalInfo.mutexID, waiting_value);
+				assert(waiting_value == wait_value);
 
-				profiler::Global<>::traceMemory = tmp;
 				registered.store(2); // Perform this always at the end if the initialization.
 			}
 
@@ -677,36 +677,36 @@ namespace profiler {
 			while (registered.load() != 2);
 
 			_id = _counter.fetch_add(1, std::memory_order_relaxed);
+			registerName("mutex_" + std::to_string(_id), "", 0, Global<>::globalInfo.mutexID, _id);
 		}
 
 		mutex(const mutex &) = delete;
 
 		void lock()
 		{
-			INSTRUMENT_EVENT(instrument_mutex_id, instrument_waiting)
+			INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, waiting_value)
 			_lock.lock();
-			INSTRUMENT_EVENT(instrument_mutex_id, _id)
+			INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, _id)
 		}
 
 		void unlock()
 		{
 			_lock.unlock();
-			INSTRUMENT_EVENT(instrument_mutex_id, 0)
+			INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, 0)
 		}
 
 		bool try_lock()
 		{
 			const bool locked = _lock.try_lock();
 			if (locked)
-				INSTRUMENT_EVENT(instrument_mutex_id, _id)
+				INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, _id)
 			return locked;
 		}
 
 	private:
 		static inline std::atomic<unsigned char> registered = 0;
-		static inline uint16_t instrument_mutex_id;
-		static constexpr uint16_t instrument_waiting = 1;	  /// Reserve the event 1 to blocked by a mutex
-		static inline std::atomic<unsigned int> _counter = instrument_waiting + 1; /// The lock counter starts after it
+		static constexpr uint16_t waiting_value = 1;                          /// Reserve the event 1 to blocked by a mutex
+		static inline std::atomic<unsigned int> _counter = waiting_value + 1; /// The lock counter starts after it
 
 
 		unsigned int _id;
