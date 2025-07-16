@@ -118,11 +118,12 @@ namespace {
 	{
 		// Store the very first time we enter this function and then return the
 		// number of nanoseconds AFTER this first call.
-		static const std::chrono::high_resolution_clock::time_point begin
-			= std::chrono::high_resolution_clock::now();
+		static const std::chrono::steady_clock::time_point begin
+			= std::chrono::steady_clock::now();
 
-		return std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::chrono::high_resolution_clock::now() - begin).count();
+		const std::chrono::steady_clock::time_point current = std::chrono::steady_clock::now();
+
+		return std::chrono::duration_cast<std::chrono::nanoseconds>(current - begin).count();
 	}
 
 
@@ -659,7 +660,7 @@ namespace profiler {
 		*/
 	class mutex {
 	public:
-		constexpr mutex() noexcept
+		mutex() noexcept
 		{
 			valueGuard memguard(profiler::Global<>::traceMemory, false);
 			unsigned char expected = 0;
@@ -699,7 +700,9 @@ namespace profiler {
 		{
 			const bool locked = _lock.try_lock();
 			if (locked)
+			{
 				INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, _id)
+			}
 			return locked;
 		}
 
