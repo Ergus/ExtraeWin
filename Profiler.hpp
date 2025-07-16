@@ -121,7 +121,16 @@ namespace {
 		static const std::chrono::steady_clock::time_point begin
 			= std::chrono::steady_clock::now();
 
-		const std::chrono::steady_clock::time_point current = std::chrono::steady_clock::now();
+		thread_local std::chrono::steady_clock::time_point last
+			= std::chrono::steady_clock::now();
+
+		std::chrono::steady_clock::time_point current
+			= std::chrono::steady_clock::now();
+
+		if (current < last)
+			throw std::runtime_error("Consecutive time error");
+
+		last = current;
 
 		return std::chrono::duration_cast<std::chrono::nanoseconds>(current - begin).count();
 	}
@@ -239,12 +248,16 @@ namespace profiler {
 				return;
 
 			// We open the file the first time we need t flush the data.
-			if (!_file.is_open())
-			{
+			if (!_file.is_open()) {
 				_file.open(_fileName, std::ios::out | std::ios::binary);
 
 				// Reserve space for the header
 				_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
+			}
+
+			for (int i = 1; i < _nEntries; ++i) {
+				if (_entries[i - 1]._time >= _entries[i]._time)
+					std::cerr << "Two events are not time consecutive: " <<  std::to_string(i) << std::endl;
 			}
 
 			std::cout << "# Flushed: " << _fileName << " << " << _header._totalFlushed << " + " << _nEntries << std::endl;
@@ -288,6 +301,9 @@ namespace profiler {
 		void emplaceEvent(uint16_t id, uint16_t value)
 		{
 			new (&_entries[_nEntries++]) EventEntry(id, value);
+
+			if (_nEntries > 1 && _entries[_nEntries - 2]._time >= _entries[_nEntries - 1]._time)
+				throw profilerError("Registered event is not time consecutive: " + std::to_string(_nEntries - 1));
 
 			assert(_nEntries <= _maxEntries);
 			if (_nEntries == _maxEntries)
@@ -699,8 +715,7 @@ namespace profiler {
 		bool try_lock()
 		{
 			const bool locked = _lock.try_lock();
-			if (locked)
-			{
+			if (locked) {
 				INSTRUMENT_EVENT(Global<>::globalInfo.mutexID, _id)
 			}
 			return locked;
