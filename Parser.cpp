@@ -86,18 +86,18 @@ public:
 
 		friend std::ostream& operator<<(std::ostream& os, const InternalEntry& in)
 		{
-			static size_t commcounter = 0;
+			//static size_t commcounter = 0;
 			// Format: https://tools.bsc.es/doc/1370.pdf
 			// Communication
 			// 3:object_send:lsend:psend:object_recv:lrecv:precv:size:tag
 			//   object_send -> cpu:ptask:task:thread
 			// 3:53:1:4:1:365298277:365387955:1:1:1:1:365413502:365424466:16:1
-			if (in._send) {
-				os << "3:";
-				os << in._core << ":1:1:" << in._thread << ":" << in._time << ":" << in._time << ":";
-				os << in._send->_core << ":1:1:" << in._send->_thread << ":" << in._send->_time << ":" << in._send->_time  << ":";
-				os << 1 << ":" << ++commcounter;
-			}
+			// if (in._send) {
+			// 	os << "3:";
+			// 	os << in._core << ":1:1:" << in._thread << ":" << in._time << ":" << in._time << ":";
+			// 	os << in._send->_core << ":1:1:" << in._send->_thread << ":" << in._send->_time << ":" << in._send->_time  << ":";
+			// 	os << 1 << ":" << ++commcounter;
+			// }
 
 			// Event
 			// 2:cpu:appl:task:thread:time:event:value
@@ -146,12 +146,19 @@ public:
 		_body.reserve(nentries);
 		_threadList.emplace(header._id);
 
-		for (const EventEntry &entry : tmp)
+		uint64_t last_time = 0;
+		for (size_t i = 0; i < tmp.size(); ++i)
 		{
+			const EventEntry &entry = tmp[i];
 			// Indicate to the last message that there was a migration between
 			// these two steps.
 			if (_body.size() > 0 && _body.back()._core != entry._core)
 				_body.back().addMigration(entry, header._id);
+
+
+			if (entry._time <= last_time)
+				throw std::runtime_error("Wrong time in consecutive events: " + std::to_string(i));
+			last_time = entry._time;
 
 			_body.emplace_back(entry, header._id);
 			_coresList.emplace(entry._core);
@@ -198,8 +205,9 @@ public:
 		const time_t localTime = static_cast<time_t>(_startGTime);
 
 		std::stringstream ss;
+
 		ss << "#Paraver " << std::put_time(std::localtime(&localTime), "(%d/%m/%Y at %H:%M):")
-		   << elapsed << "_ns:1(" << _coresList.size() << "):1:1(" << _threadList.size() << ":1)";
+			<< elapsed << "_ns:1(" << *std::max_element(_coresList.begin(), _coresList.end()) << "):1:1(" << _threadList.size() << ":1)";
 		return ss.str();
 	}
 
