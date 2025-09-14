@@ -255,7 +255,7 @@ namespace profiler {
 				_file.write(reinterpret_cast<char *>(&_header), sizeof(TraceHeader));
 			}
 
-			for (int i = 1; i < _nEntries; ++i) {
+			for (size_t i = 1; i < _nEntries; ++i) {
 				if (_entries[i - 1]._time >= _entries[i]._time)
 					std::cerr << "Two events are not time consecutive: " <<  std::to_string(i) << std::endl;
 			}
