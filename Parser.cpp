@@ -157,7 +157,7 @@ public:
 
 
 			if (entry._time <= last_time)
-				throw std::runtime_error("Wrong time in consecutive events: " + std::to_string(i));
+				throw std::runtime_error("Wrong time in consecutive events: " + std::to_string(i) + " in file: " + filePath.string());
 			last_time = entry._time;
 
 			_body.emplace_back(entry, header._id);
