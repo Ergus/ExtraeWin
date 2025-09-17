@@ -60,6 +60,8 @@ namespace {
 	inline void killPool()
 	{
 	}
+
+	#define FUNC_NAME __FUNCSIG__
 }
 
 #else // defined(WIN32)
@@ -105,6 +107,8 @@ namespace {
 		oneapi::tbb::finalize(handle);
 		#endif
 	}
+
+	#define FUNC_NAME __PRETTY_FUNCTION__
 
 }
 
@@ -899,7 +903,7 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    nested inside functions to generate independent events. */
 #define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
 	profiler::Global<>::traceMemory = false;				\
-	static uint16_t CAT(__profiler_id_,EVENT) =							\
+	static const uint16_t CAT(__profiler_id_,EVENT) =							\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT, 0); \
 	profiler::ProfilerGuard<> guard(CAT(__profiler_id_,EVENT), VALUE);	\
 	profiler::Global<>::traceMemory = true;
@@ -912,12 +916,12 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    This is intended to be called immediately after a function starts. */
 #define INSTRUMENT_FUNCTION(...)										\
     profiler::Global<>::traceMemory = false;				            \
-	static std::string __profiler_function_name =                       \
-		std::string_view(__VA_ARGS__).empty() ? __func__ : std::string(__VA_ARGS__); \
-	static uint16_t __profiler_function_id =							\
+	static const std::string __profiler_function_name =                       \
+		std::string_view(__VA_ARGS__).empty() ? FUNC_NAME : std::string(__VA_ARGS__); \
+	static const uint16_t __profiler_function_id =							\
 		profiler::registerName(__profiler_function_name, __FILE__, __LINE__, 0, 0);  \
     static uint16_t CAT(__profiler_function_,__LINE__) =				\
-        profiler::registerName(__profiler_function_name, __FILE__, __LINE__, __profiler_function_id, 1); \
+        profiler::registerName(__func__, __FILE__, __LINE__, __profiler_function_id, 1); \
 	profiler::ProfilerGuard<> __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));		\
 	profiler::Global<>::traceMemory = true;
 
@@ -926,11 +930,11 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 
 	This macro creates a new event value for the __profiler_function_id event.
 	An extra second string argument can be passed to the macro in order to set a
-	custom name to the event value. Otherwise the __funct__:__LINE__ will be used.
+	custom name to the event value. Otherwise the __func__:__LINE__ will be used.
 	@param VALUE the numeric value for the event. */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	profiler::Global<>::traceMemory = false;				            \
-	static uint16_t CAT(__profiler_function_,__LINE__) =				\
+	static const uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
 	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(      \
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
