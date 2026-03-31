@@ -911,15 +911,33 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 #define TOKEN_PASTE(x, y) x##y
 #define CAT(X,Y) TOKEN_PASTE(X,Y)
 
-/** Instrument the function scope
+/** Instrument a named scope.
 
-   Similar to instrument function, but requires more parameters. This can be
-   nested inside functions to generate independent events. */
-#define INSTRUMENT_SCOPE(EVENT, VALUE, ...)								\
-	profiler::Global<>::traceMemory = false;				\
-	static const uint16_t CAT(__profiler_id_,EVENT) =							\
-		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, EVENT, 0); \
-	profiler::ProfilerGuard<> guard(CAT(__profiler_id_,EVENT), VALUE);	\
+   TAG is a plain identifier used as the event name and to connect
+   INSTRUMENT_SCOPE_UPDATE calls to this scope. VALUE is the numeric value
+   emitted on entry (must be != 0). The end event (value = 0) is emitted
+   automatically when the scope exits. */
+#define INSTRUMENT_SCOPE(TAG, VALUE)                                                \
+	profiler::Global<>::traceMemory = false;                                        \
+	static const uint16_t CAT(__profiler_scope_id_,TAG) =                          \
+		profiler::registerName(#TAG, __FILE__, __LINE__, 0, 0);                     \
+	profiler::ProfilerGuard<> CAT(__profiler_guard_,TAG)(                           \
+		CAT(__profiler_scope_id_,TAG), VALUE);                                      \
+	profiler::Global<>::traceMemory = true;
+
+/** Emit a new value on the event opened by INSTRUMENT_SCOPE(TAG, ...).
+
+   Must be called in the same scope or a nested scope after INSTRUMENT_SCOPE(TAG).
+   VALUE is the numeric value to emit (must be != 0).
+   An optional string argument sets the value name; otherwise __FILE__:__LINE__
+   is used. */
+#define INSTRUMENT_SCOPE_UPDATE(TAG, VALUE, ...)                                    \
+	profiler::Global<>::traceMemory = false;                                        \
+	static const uint16_t CAT(__profiler_scope_update_,__LINE__) =                 \
+		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__,        \
+			CAT(__profiler_scope_id_,TAG), VALUE);                                  \
+	profiler::Global<>::getInfoThread().eventsBuffer.emplaceEvent(                  \
+		CAT(__profiler_scope_id_,TAG), CAT(__profiler_scope_update_,__LINE__));     \
 	profiler::Global<>::traceMemory = true;
 
 /** Main macro to instrument functions.
@@ -963,6 +981,7 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 
 #define INSTRUMENT_EVENT(...)
 #define INSTRUMENT_SCOPE(...)
+#define INSTRUMENT_SCOPE_UPDATE(...)
 #define INSTRUMENT_FUNCTION(...)
 #define INSTRUMENT_FUNCTION_UPDATE(...)
 
