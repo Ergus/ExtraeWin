@@ -15,7 +15,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "Profiler.hpp"
 #include <vector>
 #include <numeric>
@@ -23,89 +22,183 @@
 #include <thread>
 #include <execution>
 #include <iostream>
+#include <map>
+#include <functional>
+#include <string>
 
-void threadFuncion1(size_t id)
-{
+// ============================================================
+// Auto-registration infrastructure
+// ============================================================
+
+inline std::map<std::string, std::function<void()>> & getTestRegistry() {
+	static std::map<std::string, std::function<void()>> registry;
+	return registry;
+}
+
+struct TestRegistrar {
+	TestRegistrar(const std::string & name, std::function<void()> fn) {
+		getTestRegistry().emplace(name, fn);
+	}
+};
+
+#define DEFINE_TEST(name)                                   \
+	static void name();                                     \
+	static TestRegistrar registrar_##name(#name, name);    \
+	static void name()
+
+// ============================================================
+// Tests
+// ============================================================
+
+// INSTRUMENT_FUNCTION with auto name
+DEFINE_TEST(test_function_auto_name) {
 	INSTRUMENT_FUNCTION();
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
 
-	std::vector<double> v1(1);
-	std::cout << "Start Thread threadFuncion1: " << id << std::endl;
+// INSTRUMENT_FUNCTION with custom name
+DEFINE_TEST(test_function_custom_name) {
+	INSTRUMENT_FUNCTION("my_custom_function");
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
 
-	for (size_t i = 0; i < 10; ++i) {
-		INSTRUMENT_SCOPE(10, 1 + i, "LOOP");
-		v1.resize(v1.size() * 2);
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
-	}
+// INSTRUMENT_FUNCTION + INSTRUMENT_FUNCTION_UPDATE
+DEFINE_TEST(test_function_update) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_FUNCTION_UPDATE(2, "phase_init");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	INSTRUMENT_FUNCTION_UPDATE(3, "phase_work");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	INSTRUMENT_FUNCTION_UPDATE(4, "phase_cleanup");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+}
 
-	v1.clear();
-
-	for (size_t i = 0; i < 10; ++i) {
-		INSTRUMENT_SCOPE(11, 1 + i);
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+// INSTRUMENT_FUNCTION + INSTRUMENT_SCOPE
+DEFINE_TEST(test_scope) {
+	INSTRUMENT_FUNCTION();
+	for (size_t i = 0; i < 5; ++i) {
+		INSTRUMENT_SCOPE(work_loop, 1 + i);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 }
 
-void threadFuncion2(size_t id)
-{
-	INSTRUMENT_FUNCTION("threadFuncion2Specified");
-
-	std::cout << "Start Thread threadFuncion2: " << id << std::endl;
-
-	INSTRUMENT_FUNCTION_UPDATE(10, "LOOP1");
-	for (size_t i = 0; i < 10; ++i) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	}
-
-	for (size_t i = 0; i < 10; ++i) {
-		INSTRUMENT_FUNCTION_UPDATE(11);
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	}
+// INSTRUMENT_FUNCTION + INSTRUMENT_SCOPE + INSTRUMENT_SCOPE_UPDATE
+DEFINE_TEST(test_scope_update) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_SCOPE(work_scope, 1);
+	INSTRUMENT_SCOPE_UPDATE(work_scope, 2, "prepare");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	INSTRUMENT_SCOPE_UPDATE(work_scope, 3, "execute");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	INSTRUMENT_SCOPE_UPDATE(work_scope, 4, "finalize");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
-int main()
-{
-	std::cout << "Enter Main" << std::endl;
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-	std::vector<std::thread> threadVector;
-
-	std::vector<double> tmp(100);
-
-	for (size_t i = 0; i < 10; ++i) {
-		threadVector.emplace_back(threadFuncion1, i);
+// INSTRUMENT_FUNCTION_UPDATE interleaved with INSTRUMENT_SCOPE
+DEFINE_TEST(test_function_and_scope) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_FUNCTION_UPDATE(2, "setup");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	for (size_t i = 0; i < 5; ++i) {
+		INSTRUMENT_SCOPE(iteration, 1 + i);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
+	INSTRUMENT_FUNCTION_UPDATE(3, "teardown");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+}
 
-	for(auto& t: threadVector)
-		t.join();
-
-	tmp.resize(10); // Used to get memory trace information
-
-	std::cout << "Sleep Main" << std::endl;
-	std::this_thread::sleep_for(std::chrono::milliseconds(50));
-	std::cout << "Wake Up" << std::endl;
-
-	threadVector.clear();
-	for (size_t i = 0; i < 10; ++i) {
-		threadVector.emplace_back(threadFuncion2, i);
+// INSTRUMENT_FUNCTION_UPDATE + INSTRUMENT_SCOPE + INSTRUMENT_SCOPE_UPDATE all together
+DEFINE_TEST(test_nested) {
+	INSTRUMENT_FUNCTION("nested_test");
+	INSTRUMENT_FUNCTION_UPDATE(2, "outer_begin");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	for (size_t i = 0; i < 3; ++i) {
+		INSTRUMENT_SCOPE(inner, 1 + i);
+		INSTRUMENT_SCOPE_UPDATE(inner, 2, "inner_work");
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		INSTRUMENT_SCOPE_UPDATE(inner, 3, "inner_done");
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
+	INSTRUMENT_FUNCTION_UPDATE(3, "outer_end");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+}
 
-	for(auto& t: threadVector)
+// INSTRUMENT_FUNCTION across multiple threads
+static void threaded_worker(size_t id) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_FUNCTION_UPDATE(2, "work");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10 + id));
+}
+
+DEFINE_TEST(test_multithreaded_function) {
+	std::vector<std::thread> threads;
+	for (size_t i = 0; i < 4; ++i)
+		threads.emplace_back(threaded_worker, i);
+	for (auto& t : threads)
 		t.join();
+}
 
-	// Try to use the other way to parallelize
-	std::vector<size_t> in(20);
+// INSTRUMENT_SCOPE + INSTRUMENT_SCOPE_UPDATE across multiple threads
+static void threaded_scope_worker(size_t id) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_SCOPE(task, 1 + id % 5);
+	INSTRUMENT_SCOPE_UPDATE(task, 2, "step_a");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	INSTRUMENT_SCOPE_UPDATE(task, 3, "step_b");
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+}
+
+DEFINE_TEST(test_multithreaded_scope) {
+	std::vector<std::thread> threads;
+	for (size_t i = 0; i < 4; ++i)
+		threads.emplace_back(threaded_scope_worker, i);
+	for (auto& t : threads)
+		t.join();
+}
+
+// INSTRUMENT_FUNCTION inside a parallel lambda
+DEFINE_TEST(test_parallel_lambda) {
+	std::vector<size_t> in(10);
 	std::iota(in.begin(), in.end(), 0);
-
-	std::vector<size_t> out(20);
+	std::vector<size_t> out(10);
 	std::transform(std::execution::par,
 	               in.cbegin(), in.cend(), out.begin(),
-	               [](size_t in) -> size_t
-	               {
-					   INSTRUMENT_FUNCTION("Parallel_Lambda");
-					   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					   return in * in;
-				   }
-	);
+	               [](size_t val) -> size_t {
+	                   INSTRUMENT_FUNCTION("parallel_lambda");
+	                   std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	                   return val * val;
+	               });
+}
 
-	std::cout << "Exit Main" << std::endl;
-	return 0;
+// ============================================================
+// Entry point
+// ============================================================
+
+int main(int argc, char* argv[]) {
+	const auto & tests = getTestRegistry();
+
+	if (argc == 2 && std::string(argv[1]) == "--list") {
+		for (const auto& [name, _] : tests)
+			std::cout << name << "\n";
+		return 0;
+	}
+
+	if (argc != 2) {
+		std::cerr << "Usage: " << argv[0] << " <test_name>|--list\n";
+		return 1;
+	}
+
+	const auto it = tests.find(argv[1]);
+	if (it == tests.end()) {
+		std::cerr << "Unknown test: " << argv[1] << "\n";
+		return 1;
+	}
+
+	try {
+		it->second();
+		return 0;
+	} catch (const std::exception& e) {
+		std::cerr << "FAILED: " << e.what() << "\n";
+		return 1;
+	}
 }

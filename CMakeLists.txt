@@ -31,4 +31,9 @@ add_executable(Parser.x Parser.cpp)
 
 enable_testing()
 
-add_test(NAME "main" COMMAND $<TARGET_FILE:main.x>)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" main_cpp)
+string(REGEX MATCHALL "\nDEFINE_TEST\\([^)]+\\)" matches "${main_cpp}")
+foreach(match ${matches})
+    string(REGEX MATCH "\nDEFINE_TEST\\(([^)]+)\\)" _ "${match}")
+    add_test(NAME "${CMAKE_MATCH_1}" COMMAND $<TARGET_FILE:main.x> "${CMAKE_MATCH_1}")
+endforeach()
