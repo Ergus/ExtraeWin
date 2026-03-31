@@ -11,6 +11,7 @@
 #include <fstream>
 #include <cassert>
 #include <chrono>
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include <filesystem>
@@ -56,6 +57,11 @@ namespace {
 		return infoBuf;
 	}
 
+	inline int getPid()
+	{
+		return GetCurrentProcessId();
+	}
+
 	// In MSWindows this seems possible, but unneeded.
 	inline void killPool()
 	{
@@ -95,6 +101,11 @@ namespace {
 			perror("Error getting hostname");
 
 		return infoBuf;
+	}
+
+	inline int getPid()
+	{
+		return getpid();
 	}
 
 	// function to kill tbb thread-pool on linux.
@@ -521,7 +532,7 @@ namespace profiler {
 			const time_t localTime = static_cast<time_t>(systemTimePoint);
 
 			std::stringstream ss;
-			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S");
+			ss << "TRACEDIR_" << std::put_time(std::localtime(&localTime), "%Y-%m-%d_%H_%M_%S") << "_" << getPid();
 			return ss.str();
 		}
 
