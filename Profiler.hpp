@@ -958,12 +958,15 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	profiler::Global<>::traceMemory = true;
 
 
-/** Main macro to instrument functions subsections.
+/** Emit a new value on the event opened by INSTRUMENT_FUNCTION.
 
-	This macro creates a new event value for the __profiler_function_id event.
-	An extra second string argument can be passed to the macro in order to set a
-	custom name to the event value. Otherwise the __func__:__LINE__ will be used.
-	@param VALUE the numeric value for the event. */
+	Must be called in a scope already instrumented by INSTRUMENT_FUNCTION —
+	it references __profiler_function_id which that macro declares. A missing
+	INSTRUMENT_FUNCTION will produce a compiler error:
+	  "undeclared identifier '__profiler_function_id'"
+	An optional string argument sets the value name; otherwise __func__:__LINE__
+	is used.
+	@param VALUE the numeric value for the event (must be != 0 and != 1). */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
 	profiler::Global<>::traceMemory = false;				            \
 	static const uint16_t CAT(__profiler_function_,__LINE__) =				\
