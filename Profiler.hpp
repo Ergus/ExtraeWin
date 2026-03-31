@@ -820,26 +820,29 @@ namespace profiler {
 		// We attempt to take the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
 		// don't need the exclusive access.
-		std::shared_lock sharedlock(_mapMutex);
-		auto it = _eventsMap.lower_bound(tid);
+		{
+			std::shared_lock sharedlock(_mapMutex);
+			auto it = _eventsMap.lower_bound(tid);
 
-		if (it != _eventsMap.end() && it->first == tid)
-			return it->second;
+			if (it != _eventsMap.end() && it->first == tid)
+				return it->second;
+		}
 
 		// === else === create new entry: <tid, id>
 		// Else, this is the first time we use this tid, so, we need
 		// exclusive access to modify the map. So, let's release the
 		// read lock and try to take the write (unique) lock.
-		sharedlock.release();
-		_mapMutex.unlock_shared();
 		std::unique_lock uniquelock(_mapMutex); // Now lock exclusively
 
 		const std::string filename
 			= Global<I>::globalInfo.traceDirectory + "/Trace_" + std::to_string(_tcounter) + ".bin";
 
-		it = _eventsMap.try_emplace(
-			it, tid, _tcounter++, tid, filename, Global<I>::globalInfo.startSystemTimePoint
+		auto [it, inserted] = _eventsMap.try_emplace(
+			tid, _tcounter, tid, filename, Global<I>::globalInfo.startSystemTimePoint
 		);
+
+		if (inserted)
+			++_tcounter;
 
 		return it->second;
 	}
