@@ -151,36 +151,6 @@ namespace {
 	}
 
 
-	/** Guard class to set value on variable, but restore at end of scope.
-		This somehow mimics the lexical scoping behavior for global variables to
-		set the value in the scope temporarily. */
-	template<typename T>
-	class valueGuard
-	{
-		const T _initialValue;
-		const T _settedValue;
-		T &_valueRef;
-
-	public:
-		valueGuard(const valueGuard&) = delete; // A guard is NEVER copyable!!
-
-		/** Guard constructor.
-			@param value is the variable to be temporarily modified.
-			@param newValue is the new value to set temporarily. */
-		explicit valueGuard(T &value, T newValue)
-			: _initialValue(value)
-			, _settedValue(newValue)
-			, _valueRef(value)  // assign reference to remember what to restore
-		{
-			_valueRef = newValue;
-		}
-
-		~valueGuard()
-		{
-			assert(_settedValue == _valueRef);
-			_valueRef = _initialValue;
-		}
-	};
 }
 
 namespace profiler {
@@ -527,7 +497,6 @@ namespace profiler {
 		/** Static utility function to build the trace directory */
 		static std::string getTraceDirectory(uint64_t systemTimePoint)
 		{
-			assert(traceMemory == false);
 			const time_t localTime = static_cast<time_t>(systemTimePoint);
 
 			std::stringstream ss;
@@ -539,7 +508,6 @@ namespace profiler {
 
 		static InfoThread<bSize> &getInfoThread()
 		{
-			assert(traceMemory == false);
 			thread_local static InfoThread<bSize> threadInfo;
 			return threadInfo;
 		}
@@ -550,8 +518,6 @@ namespace profiler {
 			, _buffersSet()
 			, _namesSet()
 			, threadEventID(_namesSet.registerEventName("ThreadRunning"))
-			, allocationID(_namesSet.registerEventName("allocation"))
-			, deallocationID(_namesSet.registerEventName("deallocation"))
 			, mutexID(_namesSet.registerEventName("mutex"))
 		{
 			// Create the directory
@@ -567,7 +533,6 @@ namespace profiler {
 		~Global()
 		{
 			killPool(); // kills the thread pool when needed.
-			traceMemory = false;
 
 			getInfoThread().eventsBuffer.emplaceEvent(threadEventID, 0);
 
@@ -578,26 +543,11 @@ namespace profiler {
 			std::cout << "# Profiler TraceDir: " << traceDirectory << std::endl;
 		}
 
-		template <bool ALLOC>
-		static void allocate(size_t sz)
-		{
-			if (!traceMemory)
-				return;
-
-			valueGuard guard(traceMemory, false);
-			if constexpr (ALLOC)
-				getInfoThread().eventsBuffer.emplaceEvent(getInfoGlobal().allocationID, sz);
-			else
-				getInfoThread().eventsBuffer.emplaceEvent(getInfoGlobal().deallocationID, sz);
-		}
-
 		static Global & getInfoGlobal()
 		{
 			static Global instance;
 			return instance;
 		}
-
-		inline thread_local static bool traceMemory = false;
 
 		const uint64_t startSystemTimePoint;
 		const std::string traceDirectory;
@@ -606,8 +556,6 @@ namespace profiler {
 		NameSet<uint16_t> _namesSet; 		// Events names register
 
 		const uint16_t threadEventID;
-		const uint16_t allocationID;
-		const uint16_t deallocationID;
 		const uint16_t mutexID;
 
 	};
@@ -628,8 +576,6 @@ namespace profiler {
 		const std::string &fileName, size_t line,
 		uint16_t event, uint16_t value
 	) {
-		assert (Global::traceMemory == false);
-
 		if (value == 0)
 			return infoGlobal._namesSet.registerEventName(name, fileName, line, event);
 		else
@@ -662,16 +608,13 @@ namespace profiler {
 		//! Guard destructor
 		~ProfilerGuard()
 		{
-			valueGuard guard(Global::traceMemory, false);
 			Global::getInfoThread().eventsBuffer.emplaceEvent(_id, 0);
 		}
 
 	}; // ProfilerGuard
 
 #define INSTRUMENT_EVENT(ID, VALUE) \
-	profiler::Global::traceMemory = false;				            \
-	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(ID, VALUE); \
-	profiler::Global::traceMemory = true;				            \
+	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(ID, VALUE);
 
 
 	/** Intrumented mutex
@@ -683,7 +626,6 @@ namespace profiler {
 	public:
 		mutex() noexcept
 		{
-			valueGuard memguard(profiler::Global::traceMemory, false);
 			unsigned char expected = 0;
 			// Globals: 0 = no initialized, 1 = initialization in progress, 2 = already initialized
 			if (registered.compare_exchange_strong(expected, 1)) {
@@ -745,8 +687,6 @@ namespace profiler {
 	T NameSet<T>::registerEventName(
 		std::string eventName, const std::string &fileName, size_t line, T event
 	) {
-		assert(Global::traceMemory == false);
-
 		if (eventName.empty())
 		{
 			std::filesystem::path p(fileName);
@@ -779,8 +719,6 @@ namespace profiler {
 		T event,
 		uint16_t value
 	) {
-		assert(Global::traceMemory == false);
-
 		if (valueName.empty())
 		{
 			std::filesystem::path p(fileName);
@@ -863,9 +801,6 @@ namespace profiler {
 	template <size_t I>
 	InfoThread<I>::~InfoThread()
 	{
-		// This is the thread destructor, so, no allocation events must be
-		// reported after this.
-		Global::traceMemory = false;
 		if (_id > 1)
 			eventsBuffer.emplaceEvent(infoGlobal.threadEventID, 0);
 	}
@@ -873,21 +808,6 @@ namespace profiler {
 
 } // profiler
 
-#if PROFILER_ENABLED > 1
-
-inline void* operator new(size_t sz)
-{
-	profiler::Global::allocate<true>(sz);
-	return malloc(sz);
-}
-
-inline void operator delete(void* ptr, size_t sz) noexcept
-{
-	free(ptr);
-	profiler::Global::allocate<false>(sz);
-}
-
-#endif // PROFILER_ENABLED > 1
 
 /** \defgroup public interface
 	\brief This is the simpler linker list and its functions
@@ -908,12 +828,10 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    emitted on entry (must be != 0). The end event (value = 0) is emitted
    automatically when the scope exits. */
 #define INSTRUMENT_SCOPE(TAG, VALUE)                                                \
-	profiler::Global::traceMemory = false;                                        \
 	static const uint16_t CAT(__profiler_scope_id_,TAG) =                          \
 		profiler::registerName(#TAG, __FILE__, __LINE__, 0, 0);                     \
 	profiler::ProfilerGuard CAT(__profiler_guard_,TAG)(                           \
-		CAT(__profiler_scope_id_,TAG), VALUE);                                      \
-	profiler::Global::traceMemory = true;
+		CAT(__profiler_scope_id_,TAG), VALUE);
 
 /** Emit a new value on the event opened by INSTRUMENT_SCOPE(TAG, ...).
 
@@ -922,13 +840,11 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    An optional string argument sets the value name; otherwise __FILE__:__LINE__
    is used. */
 #define INSTRUMENT_SCOPE_UPDATE(TAG, VALUE, ...)                                    \
-	profiler::Global::traceMemory = false;                                        \
 	static const uint16_t CAT(__profiler_scope_update_,__LINE__) =                 \
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__,        \
 			CAT(__profiler_scope_id_,TAG), VALUE);                                  \
 	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(                  \
-		CAT(__profiler_scope_id_,TAG), CAT(__profiler_scope_update_,__LINE__));     \
-	profiler::Global::traceMemory = true;
+		CAT(__profiler_scope_id_,TAG), CAT(__profiler_scope_update_,__LINE__));
 
 /** Main macro to instrument functions.
 
@@ -937,15 +853,13 @@ inline void operator delete(void* ptr, size_t sz) noexcept
    calling scope finalizes.
    This is intended to be called immediately after a function starts. */
 #define INSTRUMENT_FUNCTION(...)										\
-    profiler::Global::traceMemory = false;				            \
 	static const std::string __profiler_function_name =                       \
 		std::string_view(__VA_ARGS__).empty() ? FUNC_NAME : std::string(__VA_ARGS__); \
 	static const uint16_t __profiler_function_id =							\
 		profiler::registerName(__profiler_function_name, __FILE__, __LINE__, 0, 0);  \
     static uint16_t CAT(__profiler_function_,__LINE__) =				\
         profiler::registerName(__func__, __FILE__, __LINE__, __profiler_function_id, 1); \
-	profiler::ProfilerGuard __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));		\
-	profiler::Global::traceMemory = true;
+	profiler::ProfilerGuard __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));
 
 
 /** Emit a new value on the event opened by INSTRUMENT_FUNCTION.
@@ -958,13 +872,11 @@ inline void operator delete(void* ptr, size_t sz) noexcept
 	is used.
 	@param VALUE the numeric value for the event (must be != 0 and != 1). */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
-	profiler::Global::traceMemory = false;				            \
 	static const uint16_t CAT(__profiler_function_,__LINE__) =				\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
 	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(      \
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
-		);															    \
-	profiler::Global::traceMemory = true;
+		);
 
 //!@}
 
