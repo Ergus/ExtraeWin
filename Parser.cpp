@@ -30,6 +30,8 @@
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 
+#define NOMINMAX
+#define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #define MAP_FAILED nullptr
 
