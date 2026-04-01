@@ -546,27 +546,61 @@ namespace profiler {
 		mutable uint32_t _lastValue = 0;
 		mutable bool     _initialized = false;
 
-		static int openCounter(uint32_t type, uint64_t config) noexcept
+		/** Low-level wrapper around perf_event_open.
+		    excludeKernel=true for hardware/software counters (userspace only);
+		    false for tracepoints, which fire in kernel space. */
+		static int openPerfEvent(uint32_t type, uint64_t config, bool excludeKernel) noexcept
 		{
 			perf_event_attr attr{
 				.type           = type,
 				.size           = sizeof(perf_event_attr),
 				.config         = config,
-				.exclude_kernel = 1,
-				.exclude_hv     = 1,
+				.exclude_kernel = excludeKernel ? 1u : 0u,
+				.exclude_hv     = excludeKernel ? 1u : 0u,
 			};
 			return static_cast<int>(syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0));
+		}
+
+		/** Open a named hardware or software counter from the static table. */
+		static int openNamedCounter(std::string_view name)
+		{
+			const auto it = std::lower_bound(std::begin(allCounters), std::end(allCounters), name);
+			if (it == std::end(allCounters) || it->name != name)
+				throw profilerError("INSTRUMENT_PERF: unsupported counter '" + std::string(name) + "'");
+			return openPerfEvent(it->type, it->config, true);
+		}
+
+		/** Open a syscall tracepoint counter by syscall name (e.g. "read", "write").
+
+		    Tracepoint IDs are assigned dynamically by the kernel at boot, so they
+		    cannot be in a static table and must be read from the tracing filesystem.
+		    Unlike hardware/software counters, tracepoints fire in kernel space so
+		    exclude_kernel must be 0. The pid=0/cpu=-1 binding keeps the counter
+		    thread-local: only syscalls from the calling thread are counted. */
+		static int openSyscallTracepoint(std::string_view syscallName)
+		{
+			for (const char *base : {"/sys/kernel/tracing", "/sys/kernel/debug/tracing"}) {
+				const std::string idPath = std::string(base)
+					+ "/events/syscalls/sys_enter_" + std::string(syscallName) + "/id";
+				std::ifstream idFile(idPath);
+				uint64_t traceId = 0;
+				if (idFile >> traceId)
+					return openPerfEvent(PERF_TYPE_TRACEPOINT, traceId, false);
+			}
+			throw profilerError("INSTRUMENT_PERF: unknown syscall 'syscall:" + std::string(syscallName) + "'");
 		}
 
 	public:
 		explicit PerfCounter(std::string_view name)
 		{
-			const auto it = std::lower_bound(std::begin(allCounters), std::end(allCounters), name);
-			if (it == std::end(allCounters) || it->name != name)
-				throw profilerError("INSTRUMENT_PERF: unsupported counter '" + std::string(name) + "'");
-			_fd = openCounter(it->type, it->config);
+			static constexpr std::string_view syscallPrefix = "syscall:";
+			if (name.substr(0, syscallPrefix.size()) == syscallPrefix)
+				_fd = openSyscallTracepoint(name.substr(syscallPrefix.size()));
+			else
+				_fd = openNamedCounter(name);
+
 			if (_fd < 0)
-				std::cerr << "# INSTRUMENT_PERF: failed to open counter '" << name
+				std::cerr << "# INSTRUMENT_PERF: failed to open '" << name
 				          << "': " << strerror(errno) << "\n";
 		}
 
