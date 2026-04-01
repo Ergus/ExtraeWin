@@ -16,6 +16,8 @@
  */
 
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -281,6 +283,10 @@ public:
 
 int main(int argc, char **argv)
 {
+	// Replace the default terminate handler so that any unhandled exception
+	// causes an immediate exit with a non-zero code instead of invoking the
+	// platform crash reporter (WER on Windows), which would hang in CI.
+	std::set_terminate([]{ _exit(1); });
 	if (argc < 2)
 		throw std::runtime_error(
 			"Wrong argument. Usage: ./" + std::string(argv[0]) + " trace_directory"
