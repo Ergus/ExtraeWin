@@ -37,7 +37,8 @@ namespace {
 	inline void* mapFile(const std::filesystem::path &path, size_t &mappedSize)
 	{
 		HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-		                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		                           nullptr, OPEN_EXISTING,
+		                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
 		if (hFile == INVALID_HANDLE_VALUE)
 			throw std::runtime_error("Failed to open file: " + path.string());
 		LARGE_INTEGER fileSize;
@@ -60,10 +61,6 @@ namespace {
 	inline void unmapFile(void *mapped, size_t)
 	{
 		UnmapViewOfFile(mapped);
-	}
-
-	inline void hintSequential(void *, size_t)
-	{
 	}
 }
 
@@ -90,17 +87,13 @@ namespace {
 		::close(fd);
 		if (mapped == MAP_FAILED)
 			throw std::runtime_error("Failed to mmap file: " + path.string());
+		::madvise(mapped, mappedSize, MADV_SEQUENTIAL);
 		return mapped;
 	}
 
 	inline void unmapFile(void *mapped, size_t size)
 	{
 		::munmap(mapped, size);
-	}
-
-	inline void hintSequential(void *mapped, size_t size)
-	{
-		::madvise(mapped, size, MADV_SEQUENTIAL);
 	}
 }
 
@@ -109,8 +102,9 @@ namespace {
 /** Memory-mapped view of a single per-thread binary trace file.
 
     The file is mapped read-only into virtual address space; no data is copied
-    into heap memory.  madvise(MADV_SEQUENTIAL) tells the kernel to prefetch
-    pages ahead of the iterator so the merge never stalls on I/O. */
+    into heap memory.  A sequential read-ahead hint is applied at open time
+    (madvise MADV_SEQUENTIAL on Linux, FILE_FLAG_SEQUENTIAL_SCAN on Windows)
+    so the merge never stalls on I/O. */
 class TraceFile {
 	void *_mapped = MAP_FAILED;
 	size_t _mappedSize = 0;
@@ -156,7 +150,6 @@ public:
 	explicit TraceFile(const std::filesystem::path &path)
 	{
 		_mapped = mapFile(path, _mappedSize);
-		hintSequential(_mapped, _mappedSize);
 
 		const char *base = static_cast<const char *>(_mapped);
 		_header = reinterpret_cast<const TraceHeader *>(base);
