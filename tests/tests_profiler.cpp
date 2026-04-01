@@ -251,17 +251,15 @@ DEFINE_TEST(test_perf_bus_cycles) {
 // INSTRUMENT_PERF: unknown counter name — must throw a profilerError on first use
 DEFINE_TEST(test_perf_unknown_counter) {
 	INSTRUMENT_FUNCTION();
-	bool caught = false;
 	try {
 		INSTRUMENT_PERF("this-counter-does-not-exist");
 #ifdef _WIN32
 		throw profiler::profilerError("INSTRUMENT_PERF: unsupported counter 'this-counter-does-not-exist'");
 #endif
 	} catch (const profiler::profilerError &) {
-		caught = true;
+		return;
 	}
-	if (!caught)
-		throw std::runtime_error("Expected profilerError for unknown perf counter");
+	throw std::runtime_error("Expected profilerError for unknown perf counter");
 }
 
 // INSTRUMENT_PERF: perf counters read from multiple threads concurrently
@@ -284,6 +282,31 @@ DEFINE_TEST(test_perf_multithreaded) {
 		threads.emplace_back(perf_thread_worker, i);
 	for (auto & t : threads)
 		t.join();
+}
+
+// INSTRUMENT_PERF: syscall tracepoint — count write() calls between two sample points
+DEFINE_TEST(test_perf_syscall_write) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_PERF("syscall:write");
+	for (int i = 0; i < 5; ++i) {
+		std::cerr.write("x", 1);
+		std::cerr.flush();
+	}
+	INSTRUMENT_PERF("syscall:write");
+}
+
+// INSTRUMENT_PERF: syscall tracepoint — unknown syscall name must throw profilerError
+DEFINE_TEST(test_perf_syscall_unknown) {
+	INSTRUMENT_FUNCTION();
+	try {
+		INSTRUMENT_PERF("syscall:this-syscall-does-not-exist");
+#ifdef _WIN32
+		throw profiler::profilerError("INSTRUMENT_PERF: unknown syscall 'syscall:this-syscall-does-not-exist'");
+#endif
+	} catch (const profiler::profilerError &) {
+		return;
+	}
+	throw std::runtime_error("Expected profilerError for unknown syscall tracepoint");
 }
 
 // ============================================================
