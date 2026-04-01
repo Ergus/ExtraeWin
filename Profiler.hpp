@@ -209,7 +209,7 @@ namespace profiler {
 			const uint16_t _core;
 			const uint32_t _value;
 
-			explicit EventEntry(uint16_t id, uint16_t value)
+			explicit EventEntry(uint16_t id, uint32_t value)
 				: _time(getNanoseconds())
 				, _id(id)
 				, _core(getCPUId())
@@ -283,7 +283,7 @@ namespace profiler {
 			_file.close(); // close the file only at the end.
 		}
 
-		void emplaceEvent(uint16_t id, uint16_t value)
+		void emplaceEvent(uint16_t id, uint32_t value)
 		{
 			new (&_entries[_nEntries++]) EventEntry(id, value);
 
