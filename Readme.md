@@ -1,6 +1,10 @@
 Readme
 =======
 
+[![Build Status](https://github.com/Ergus/ExtraeWin/actions/workflows/cmake.yml/badge.svg?branch=master)](https://github.com/Ergus/ExtraeWin/actions/workflows/cmake.yml)
+[![Coverage Status](https://coveralls.io/repos/github/Ergus/ExtraeWin/badge.svg?branch=master)](https://coveralls.io/github/Ergus/ExtraeWin?branch=master)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 This is a very simple multi-platform Instrument based profiler
 intended to work in multi-threaded systems (not intended for
 distributed memory systems). For more advanced use cases consider
@@ -32,7 +36,7 @@ function interception in a portable way.
 The basic steps are:
 --------------------
 
-1. Instrument the code like in the `main.cpp` example code.
+1. Instrument the code like in the `tests/tests_profiler.cpp` example code.
 
 	The example code includes all the different alternatives to instrument the code.
 
@@ -40,7 +44,7 @@ The basic steps are:
 	`Profiler.hpp` header.
 
 		- PROFILER_ENABLED = 0 (or not defined) don't trace anything
-		- PROFILER_ENABLED = 1 Emit user defined events (function instrumentation and thread init/stop)
+		- PROFILER_ENABLED > 0 Emit user defined events (function instrumentation and thread init/stop)
 
 2. Execute your program. This will create a directory called `TRACEDIR_<timestamp>_<pid>` in the current execution path.
 
@@ -198,7 +202,7 @@ Trace example
 The profiler generates one binary trace file per thread. For more details
 about the file format see `Parser.cpp`.
 
-For the example provided in `main.cpp` the Paraver trace looks like:
+For the example provided in `tests/tests_profiler.cpp` the Paraver trace looks like:
 
 ![ParaverTrace](images/Trace.png)
 
