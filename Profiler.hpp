@@ -73,6 +73,8 @@ namespace {
 #else // defined(WIN32)
 
 #include <unistd.h>
+#include <linux/perf_event.h>
+#include <sys/syscall.h>
 
 #ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
 #include <oneapi/tbb/global_control.h>
@@ -488,6 +490,122 @@ namespace profiler {
 
 	}; // InfoThread
 
+#ifdef __linux__
+	/** Descriptor for a supported perf event: its perf list name, type, and config.
+	    Entries must be kept sorted by name so the constructor can use
+	    std::lower_bound for a single O(log n) lookup. */
+	struct PerfCounterSpec
+	{
+		std::string_view name;
+		uint32_t type;
+		uint64_t config;
+
+		constexpr bool operator<(std::string_view other) const { return name < other; }
+	};
+
+	/** All supported perf counters (hardware and software), sorted by name.
+	    Opened with pid=0, cpu=-1: the kernel attaches each event to the calling
+	    thread and transparently saves/restores the counter on context switches
+	    and CPU migrations, so deltas always reflect only this thread's activity
+	    regardless of which core it runs on. */
+	constexpr PerfCounterSpec allCounters[] = {
+		{"branch-instructions",     PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS},
+		{"branch-misses",           PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES},
+		{"bus-cycles",              PERF_TYPE_HARDWARE, PERF_COUNT_HW_BUS_CYCLES},
+		{"cache-misses",            PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES},
+		{"cache-references",        PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES},
+		{"context-switches",        PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES},
+		{"cpu-clock",               PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK},
+		{"cpu-cycles",              PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES},
+		{"cpu-migrations",          PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS},
+		{"instructions",            PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS},
+		{"major-faults",            PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MAJ},
+		{"minor-faults",            PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MIN},
+		{"page-faults",             PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS},
+		{"stalled-cycles-backend",  PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_BACKEND},
+		{"stalled-cycles-frontend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_FRONTEND},
+		{"task-clock",              PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK},
+	};
+
+	/** Wrapper around a Linux perf_event file descriptor.
+
+	    Opened with pid=0, cpu=-1: the event follows the calling thread across
+	    CPU migrations. The kernel saves and restores the hardware counter on
+	    every context switch, so deltas accurately reflect only this thread's
+	    activity.
+
+	    The first read records the baseline and returns 0; subsequent reads
+	    return the delta since that baseline. On read failure the last known
+	    value is returned. On overflow UINT32_MAX is emitted and the baseline
+	    is reset. */
+	class PerfCounter
+	{
+		int _fd = -1;
+
+		mutable uint64_t _baseline = 0;
+		mutable uint32_t _lastValue = 0;
+		mutable bool     _initialized = false;
+
+		static int openCounter(uint32_t type, uint64_t config) noexcept
+		{
+			perf_event_attr attr{
+				.type           = type,
+				.size           = sizeof(perf_event_attr),
+				.config         = config,
+				.exclude_kernel = 1,
+				.exclude_hv     = 1,
+			};
+			return static_cast<int>(syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0));
+		}
+
+	public:
+		explicit PerfCounter(std::string_view name)
+		{
+			const auto it = std::lower_bound(std::begin(allCounters), std::end(allCounters), name);
+			if (it == std::end(allCounters) || it->name != name)
+				throw profilerError("INSTRUMENT_PERF: unsupported counter '" + std::string(name) + "'");
+			_fd = openCounter(it->type, it->config);
+			if (_fd < 0)
+				std::cerr << "# INSTRUMENT_PERF: failed to open counter '" << name
+				          << "': " << strerror(errno) << "\n";
+		}
+
+		~PerfCounter() noexcept
+		{
+			if (_fd >= 0) ::close(_fd);
+		}
+
+		PerfCounter(const PerfCounter &) = delete;
+		PerfCounter & operator=(const PerfCounter &) = delete;
+
+		bool valid() const noexcept
+		{
+			return _fd >= 0;
+		}
+
+		uint32_t read() const noexcept
+		{
+			assert(_fd >= 0);
+			uint64_t current = 0;
+			if (::read(_fd, &current, sizeof(current)) != sizeof(current))
+				return _lastValue;
+			if (!_initialized) {
+				_initialized = true;
+				_baseline = current;
+				return 0;
+			}
+			const uint64_t delta = current - _baseline;
+			if (delta > std::numeric_limits<uint32_t>::max()) {
+				_baseline = current;
+				_lastValue = std::numeric_limits<uint32_t>::max();
+				return _lastValue;
+			}
+			_lastValue = static_cast<uint32_t>(delta);
+			return _lastValue;
+		}
+	};
+#endif // __linux__
+
 	/** Info container with global variables.
 
 		This gives access to the thread and global static variables. And only
@@ -878,6 +996,33 @@ namespace profiler {
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
 		);
 
+/** Emit a hardware or software performance counter value.
+
+    NAME is the event name string (matching the name shown in `perf list`).
+    TYPE and CONFIG correspond to the perf_event_attr fields (e.g.
+    PERF_TYPE_HARDWARE and PERF_COUNT_HW_CPU_CYCLES).
+
+    A thread_local PerfCounter is opened once per (macro site, thread). The
+    first emission on each thread records the baseline and emits value 0;
+    all subsequent emissions report the delta since that baseline.
+
+    Only available on Linux. On other platforms this macro expands to nothing. */
+#ifdef __linux__
+#define INSTRUMENT_PERF(NAME)                                                       \
+	{                                                                                \
+		static const uint16_t CAT(__profiler_perf_id_, __LINE__) =                  \
+			profiler::registerName(NAME, __FILE__, __LINE__, 0, 0);                 \
+		thread_local static profiler::PerfCounter                                   \
+			CAT(__profiler_perf_ctr_, __LINE__)(NAME);                              \
+		if (CAT(__profiler_perf_ctr_, __LINE__).valid())                            \
+			profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(            \
+				CAT(__profiler_perf_id_, __LINE__),                                 \
+				CAT(__profiler_perf_ctr_, __LINE__).read());                        \
+	}
+#else
+#define INSTRUMENT_PERF(...)
+#endif
+
 //!@}
 
 #define NDEBUG SNDEBUG
@@ -889,6 +1034,7 @@ namespace profiler {
 #define INSTRUMENT_SCOPE_UPDATE(...)
 #define INSTRUMENT_FUNCTION(...)
 #define INSTRUMENT_FUNCTION_UPDATE(...)
+#define INSTRUMENT_PERF(...)
 
 namespace profiler {
     using mutex = std::mutex;

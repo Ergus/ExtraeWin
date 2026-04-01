@@ -170,6 +170,119 @@ DEFINE_TEST(test_parallel_lambda) {
 	               });
 }
 
+// INSTRUMENT_PERF: cpu-cycles and instructions sampled around a compute loop
+DEFINE_TEST(test_perf_counters) {
+	INSTRUMENT_FUNCTION();
+	std::vector<size_t> v(1000);
+	std::iota(v.begin(), v.end(), 0);
+	for (size_t iter = 0; iter < 5; ++iter) {
+		INSTRUMENT_SCOPE(compute, 1 + iter);
+		INSTRUMENT_PERF("cpu-cycles");
+		INSTRUMENT_PERF("instructions");
+		size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+		(void)sum;
+		INSTRUMENT_PERF("cpu-cycles");
+		INSTRUMENT_PERF("instructions");
+	}
+}
+
+// INSTRUMENT_PERF: software counters (task-clock, page-faults)
+DEFINE_TEST(test_perf_software_counters) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_PERF("task-clock");
+	INSTRUMENT_PERF("page-faults");
+	std::vector<size_t> v(1000);
+	std::iota(v.begin(), v.end(), 0);
+	size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+	(void)sum;
+	INSTRUMENT_PERF("task-clock");
+	INSTRUMENT_PERF("page-faults");
+}
+
+// INSTRUMENT_PERF: cache-references and cache-misses around a scattered-access pattern
+DEFINE_TEST(test_perf_cache_counters) {
+	INSTRUMENT_FUNCTION();
+	// Large vector to exceed L2 cache and provoke cache misses
+	std::vector<size_t> v(1 << 20);
+	std::iota(v.begin(), v.end(), 0);
+	// Shuffle to make accesses non-sequential
+	for (size_t i = v.size() - 1; i > 0; --i)
+		std::swap(v[i], v[std::hash<size_t>{}(i) % (i + 1)]);
+	INSTRUMENT_PERF("cache-references");
+	INSTRUMENT_PERF("cache-misses");
+	volatile size_t sink = 0;
+	for (size_t i = 0; i < v.size(); ++i)
+		sink += v[v[i] % v.size()];
+	INSTRUMENT_PERF("cache-references");
+	INSTRUMENT_PERF("cache-misses");
+}
+
+// INSTRUMENT_PERF: branch-instructions and branch-misses around an unpredictable branch
+DEFINE_TEST(test_perf_branch_counters) {
+	INSTRUMENT_FUNCTION();
+	std::vector<size_t> v(10000);
+	std::iota(v.begin(), v.end(), 0);
+	// Shuffle to make branch outcomes unpredictable
+	for (size_t i = v.size() - 1; i > 0; --i)
+		std::swap(v[i], v[std::hash<size_t>{}(i) % (i + 1)]);
+	INSTRUMENT_PERF("branch-instructions");
+	INSTRUMENT_PERF("branch-misses");
+	volatile size_t count = 0;
+	for (size_t x : v)
+		if (x % 3 == 0) ++count;
+	INSTRUMENT_PERF("branch-instructions");
+	INSTRUMENT_PERF("branch-misses");
+}
+
+// INSTRUMENT_PERF: bus-cycles counter (thread-local like all hardware counters)
+DEFINE_TEST(test_perf_bus_cycles) {
+	INSTRUMENT_FUNCTION();
+	std::vector<size_t> v(1000);
+	std::iota(v.begin(), v.end(), 0);
+	for (size_t iter = 0; iter < 5; ++iter) {
+		INSTRUMENT_SCOPE(bus_cycle_iter, 1 + iter);
+		INSTRUMENT_PERF("bus-cycles");
+		size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+		(void)sum;
+		INSTRUMENT_PERF("bus-cycles");
+	}
+}
+
+// INSTRUMENT_PERF: unknown counter name — must throw a profilerError on first use
+DEFINE_TEST(test_perf_unknown_counter) {
+	INSTRUMENT_FUNCTION();
+	bool caught = false;
+	try {
+		INSTRUMENT_PERF("this-counter-does-not-exist");
+	} catch (const profiler::profilerError &) {
+		caught = true;
+	}
+	if (!caught)
+		throw std::runtime_error("Expected profilerError for unknown perf counter");
+}
+
+// INSTRUMENT_PERF: perf counters read from multiple threads concurrently
+static void perf_thread_worker(size_t id) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_SCOPE(perf_thread_work, 1 + id % 5);
+	INSTRUMENT_PERF("cpu-cycles");
+	INSTRUMENT_PERF("instructions");
+	std::vector<size_t> v(500);
+	std::iota(v.begin(), v.end(), id);
+	size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+	(void)sum;
+	INSTRUMENT_PERF("cpu-cycles");
+	INSTRUMENT_PERF("instructions");
+}
+
+DEFINE_TEST(test_perf_multithreaded) {
+	std::vector<std::thread> threads;
+	for (size_t i = 0; i < 4; ++i)
+		threads.emplace_back(perf_thread_worker, i);
+	for (auto & t : threads)
+		t.join();
+}
+
 // ============================================================
 // Entry point
 // ============================================================
