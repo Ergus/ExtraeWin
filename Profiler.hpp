@@ -243,7 +243,7 @@ namespace profiler {
 			}
 
 			for (size_t i = 1; i < _nEntries; ++i) {
-				if (_entries[i - 1]._time >= _entries[i]._time)
+				if (_entries[i - 1]._time > _entries[i]._time)
 					std::cerr << "Two events are not time consecutive: " <<  std::to_string(i) << std::endl;
 			}
 
@@ -289,7 +289,7 @@ namespace profiler {
 		{
 			new (&_entries[_nEntries++]) EventEntry(id, value);
 
-			if (_nEntries > 1 && _entries[_nEntries - 2]._time >= _entries[_nEntries - 1]._time)
+			if (_nEntries > 1 && _entries[_nEntries - 2]._time > _entries[_nEntries - 1]._time)
 				throw profilerError("Registered event is not time consecutive: " + std::to_string(_nEntries - 1));
 
 			assert(_nEntries <= _maxEntries);

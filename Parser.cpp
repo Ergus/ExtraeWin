@@ -167,7 +167,7 @@ public:
 		// Sequential scan: validate monotonicity and collect core IDs
 		uint64_t lastTime = 0;
 		for (size_t i = 0; i < _header->_nentries; ++i) {
-			if (i > 0 && _events[i]._time <= lastTime)
+			if (i > 0 && _events[i]._time < lastTime)
 				throw std::runtime_error(
 					"Non-monotonic timestamp at event " + std::to_string(i)
 					+ " in file: " + path.string());
