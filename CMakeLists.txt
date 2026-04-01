@@ -19,6 +19,14 @@ else() # additional warnings
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    option(WITH_COVERAGE "Enable gcov coverage instrumentation" OFF)
+    if(WITH_COVERAGE)
+        add_compile_options(--coverage)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+    endif()
+endif()
+
 add_executable(tests_profiler.x EXCLUDE_FROM_ALL tests/tests_profiler.cpp)
 target_compile_definitions(tests_profiler.x PRIVATE PROFILER_ENABLED=2)
 target_include_directories(tests_profiler.x PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
