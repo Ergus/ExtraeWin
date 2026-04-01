@@ -28,10 +28,83 @@
 #include <queue>
 #include <vector>
 
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
+
+#include <windows.h>
+#define MAP_FAILED nullptr
+
+namespace {
+	inline void* mapFile(const std::filesystem::path &path, size_t &mappedSize)
+	{
+		HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+		                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (hFile == INVALID_HANDLE_VALUE)
+			throw std::runtime_error("Failed to open file: " + path.string());
+		LARGE_INTEGER fileSize;
+		if (!GetFileSizeEx(hFile, &fileSize)) {
+			CloseHandle(hFile);
+			throw std::runtime_error("Failed to stat file: " + path.string());
+		}
+		mappedSize = static_cast<size_t>(fileSize.QuadPart);
+		HANDLE hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+		CloseHandle(hFile);
+		if (!hMapping)
+			throw std::runtime_error("Failed to create file mapping: " + path.string());
+		void *mapped = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+		CloseHandle(hMapping);
+		if (!mapped)
+			throw std::runtime_error("Failed to map file: " + path.string());
+		return mapped;
+	}
+
+	inline void unmapFile(void *mapped, size_t)
+	{
+		UnmapViewOfFile(mapped);
+	}
+
+	inline void hintSequential(void *, size_t)
+	{
+	}
+}
+
+#else // defined(WIN32)
+
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+namespace {
+	inline void* mapFile(const std::filesystem::path &path, size_t &mappedSize)
+	{
+		const int fd = ::open(path.c_str(), O_RDONLY);
+		if (fd < 0)
+			throw std::runtime_error("Failed to open file: " + path.string());
+		struct stat st;
+		if (::fstat(fd, &st) < 0) {
+			::close(fd);
+			throw std::runtime_error("Failed to stat file: " + path.string());
+		}
+		mappedSize = static_cast<size_t>(st.st_size);
+		void *mapped = ::mmap(nullptr, mappedSize, PROT_READ, MAP_PRIVATE, fd, 0);
+		::close(fd);
+		if (mapped == MAP_FAILED)
+			throw std::runtime_error("Failed to mmap file: " + path.string());
+		return mapped;
+	}
+
+	inline void unmapFile(void *mapped, size_t size)
+	{
+		::munmap(mapped, size);
+	}
+
+	inline void hintSequential(void *mapped, size_t size)
+	{
+		::madvise(mapped, size, MADV_SEQUENTIAL);
+	}
+}
+
+#endif // defined(WIN32)
 
 /** Memory-mapped view of a single per-thread binary trace file.
 
@@ -82,24 +155,8 @@ public:
 
 	explicit TraceFile(const std::filesystem::path &path)
 	{
-		const int fd = ::open(path.c_str(), O_RDONLY);
-		if (fd < 0)
-			throw std::runtime_error("Failed to open file: " + path.string());
-
-		struct stat st;
-		if (::fstat(fd, &st) < 0) {
-			::close(fd);
-			throw std::runtime_error("Failed to stat file: " + path.string());
-		}
-		_mappedSize = static_cast<size_t>(st.st_size);
-
-		_mapped = ::mmap(nullptr, _mappedSize, PROT_READ, MAP_PRIVATE, fd, 0);
-		::close(fd);
-
-		if (_mapped == MAP_FAILED)
-			throw std::runtime_error("Failed to mmap file: " + path.string());
-
-		::madvise(_mapped, _mappedSize, MADV_SEQUENTIAL);
+		_mapped = mapFile(path, _mappedSize);
+		hintSequential(_mapped, _mappedSize);
 
 		const char *base = static_cast<const char *>(_mapped);
 		_header = reinterpret_cast<const TraceHeader *>(base);
@@ -127,7 +184,7 @@ public:
 	~TraceFile() noexcept
 	{
 		if (_mapped != MAP_FAILED)
-			::munmap(_mapped, _mappedSize);
+			unmapFile(_mapped, _mappedSize);
 	}
 
 	const EventEntry *begin() const { return _events; }
