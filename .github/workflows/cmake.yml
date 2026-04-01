@@ -72,7 +72,9 @@ jobs:
         run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
 
       - name: Generate Coverage
-        run: lcov -c --directory ${{github.workspace}}/build --output-file ${{github.workspace}}/build/coverage.info
+        run: |
+          lcov -c --directory ${{github.workspace}}/build --output-file ${{github.workspace}}/build/coverage.info
+          lcov --remove ${{github.workspace}}/build/coverage.info '/usr/*' --output-file ${{github.workspace}}/build/coverage.info
 
       - name: Coveralls
         uses: coverallsapp/github-action@v2
