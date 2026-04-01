@@ -73,8 +73,10 @@ namespace {
 #else // defined(WIN32)
 
 #include <unistd.h>
+#ifdef __linux__
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
+#endif
 
 #ifdef _PSTL_PAR_BACKEND_TBB // This macro is defined in gcc libraries
 #include <oneapi/tbb/global_control.h>
