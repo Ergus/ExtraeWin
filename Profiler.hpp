@@ -73,6 +73,7 @@ namespace {
 #else // defined(WIN32)
 
 #include <unistd.h>
+#include <algorithm>
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
 
@@ -570,6 +571,15 @@ namespace profiler {
 			return openPerfEvent(it->type, it->config, true);
 		}
 
+		/** Returns a hint string if perf_event_paranoid is set too high to allow
+		    tracepoints, empty otherwise. Used to give actionable error messages. */
+		static std::string perfParanoidHint()
+		{
+			if (int paranoid = 0; std::ifstream("/proc/sys/kernel/perf_event_paranoid") >> paranoid && paranoid > 0)
+				return " (perf_event_paranoid=" + std::to_string(paranoid)
+				       + "; syscall tracepoints require paranoid <= 0 or CAP_PERFMON)";
+			return {};
+		}
 
 		/** Search the kernel tracing filesystem for the tracepoint ID of a syscall.
 
@@ -635,7 +645,7 @@ namespace profiler {
 
 			if (_fd < 0)
 				std::cerr << "# INSTRUMENT_PERF: failed to open '" << name
-				          << "': " << strerror(errno) << "\n";
+				          << "': " << strerror(errno) << perfParanoidHint() << "\n";
 		}
 
 		~PerfCounter() noexcept
@@ -947,9 +957,7 @@ namespace profiler {
 		// don't need the exclusive access.
 		{
 			std::shared_lock sharedlock(_mapMutex);
-			auto it = _eventsMap.lower_bound(tid);
-
-			if (it != _eventsMap.end() && it->first == tid)
+			if (auto it = _eventsMap.lower_bound(tid); it != _eventsMap.end() && it->first == tid)
 				return it->second;
 		}
 
