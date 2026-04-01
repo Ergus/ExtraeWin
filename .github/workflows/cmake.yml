@@ -83,7 +83,9 @@ jobs:
   musl:
     name: Test on Alpine Linux (musl)
     runs-on: ubuntu-24.04
-    container: alpine:latest
+    container:
+      image: alpine:latest
+      options: --volume /sys/kernel/tracing:/sys/kernel/tracing:ro
     timeout-minutes: 5
 
     steps:
