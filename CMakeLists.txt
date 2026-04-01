@@ -38,6 +38,7 @@ enable_testing()
 # so a plain "cmake --build ." never compiles the test executables.
 add_test(NAME build_test_binaries
     COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG>
             --target tests_profiler.x test_parser.x)
 set_tests_properties(build_test_binaries PROPERTIES
     FIXTURES_SETUP  test_binaries_built
