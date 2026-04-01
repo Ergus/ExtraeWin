@@ -70,7 +70,11 @@ static void writeTraceFile(
 
 static int runParser(const std::string &parserPath, const std::filesystem::path &dir)
 {
+#ifdef _WIN32
+	const std::string cmd = parserPath + " " + dir.string() + " > NUL 2>&1";
+#else
 	const std::string cmd = parserPath + " " + dir.string() + " > /dev/null 2>&1";
+#endif
 	return std::system(cmd.c_str());
 }
 
@@ -89,18 +93,16 @@ static std::vector<std::string> readPRV(const std::filesystem::path &dir)
 	return lines;
 }
 
-/** RAII wrapper for a mkdtemp temporary directory. */
+/** RAII wrapper for a temporary directory. */
 struct TempDir {
 	std::filesystem::path path;
 
 	TempDir()
 	{
-		char tmpl[] = "/tmp/test_parser_XXXXXX";
-		const char *p = ::mkdtemp(tmpl);
-		if (!p)
-			throw std::runtime_error(
-				std::string("mkdtemp failed: ") + strerror(errno));
-		path = p;
+		static int counter = 0;
+		path = std::filesystem::temp_directory_path()
+		     / ("test_parser_" + std::to_string(++counter));
+		std::filesystem::create_directory(path);
 	}
 
 	~TempDir() noexcept
