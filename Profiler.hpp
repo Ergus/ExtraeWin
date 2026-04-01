@@ -570,24 +570,58 @@ namespace profiler {
 			return openPerfEvent(it->type, it->config, true);
 		}
 
-		/** Open a syscall tracepoint counter by syscall name (e.g. "read", "write").
 
-		    Tracepoint IDs are assigned dynamically by the kernel at boot, so they
-		    cannot be in a static table and must be read from the tracing filesystem.
-		    Unlike hardware/software counters, tracepoints fire in kernel space so
-		    exclude_kernel must be 0. The pid=0/cpu=-1 binding keeps the counter
-		    thread-local: only syscalls from the calling thread are counted. */
-		static int openSyscallTracepoint(std::string_view syscallName)
+		/** Search the kernel tracing filesystem for the tracepoint ID of a syscall.
+
+		    Tracepoint IDs are assigned dynamically by the kernel at boot so they
+		    cannot live in a static table; they must be read from tracefs at runtime.
+
+		    Returns the ID (always > 0) if found and readable.
+		    Returns 0 if the tracepoint exists but the id file is not readable
+		    (e.g. insufficient permissions).
+		    Throws profilerError if no tracing filesystem exposes this syscall name. */
+		static uint64_t findSyscallTracepointId(std::string_view syscallName)
 		{
+			const std::string entryName = "sys_enter_" + std::string(syscallName);
+
 			for (const char *base : {"/sys/kernel/tracing", "/sys/kernel/debug/tracing"}) {
-				const std::string idPath = std::string(base)
-					+ "/events/syscalls/sys_enter_" + std::string(syscallName) + "/id";
-				std::ifstream idFile(idPath);
-				uint64_t traceId = 0;
-				if (idFile >> traceId)
-					return openPerfEvent(PERF_TYPE_TRACEPOINT, traceId, false);
+				const std::string syscallsDir = std::string(base) + "/events/syscalls";
+
+				// Use error_code to avoid exceptions when the tracing filesystem
+				// root is inaccessible (e.g. debugfs not mounted).
+				std::error_code ec;
+				const std::filesystem::directory_iterator it(syscallsDir, ec);
+				if (ec)
+					continue;  // directory not accessible; try next base path
+
+				if (!std::any_of(it, std::filesystem::directory_iterator{},
+					[&entryName](const auto &entry) {
+						return entry.path().filename() == entryName;
+					}))
+					continue;
+
+				// Tracepoint exists; try to read its id file.
+				// This may still fail with EACCES on locked-down systems.
+				if (uint64_t traceId = 0; std::ifstream(syscallsDir + "/" + entryName + "/id") >> traceId)
+					return traceId;
+				return 0;  // exists but cannot read ID
 			}
 			throw profilerError("INSTRUMENT_PERF: unknown syscall 'syscall:" + std::string(syscallName) + "'");
+		}
+
+		/** Open a syscall tracepoint counter by syscall name (e.g. "read", "write").
+
+		    Unlike hardware/software counters, tracepoints fire in kernel space so
+		    exclude_kernel must be 0. The pid=0/cpu=-1 binding keeps the counter
+		    thread-local: only syscalls from the calling thread are counted.
+
+		    Returns -1 (with errno set) if the tracepoint exists but cannot be opened
+		    due to permissions. Throws profilerError if the syscall name is unknown. */
+		static int openSyscallTracepoint(std::string_view syscallName)
+		{
+			if (const uint64_t traceId = findSyscallTracepointId(syscallName); traceId != 0)
+				return openPerfEvent(PERF_TYPE_TRACEPOINT, traceId, false);
+			return -1;  // tracepoint exists but ID is unreadable; caller will warn
 		}
 
 	public:
