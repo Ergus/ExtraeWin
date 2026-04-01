@@ -28,18 +28,11 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Prints
+        shell: bash
         run: |
-             echo ${{ matrix.config.cc }}
-             echo ${{ matrix.config.os }}
-             gcc -v
-
-      - name: Install TBB Linux
-        if: matrix.config.os == 'ubuntu-24.04'
-        run: sudo apt install libtbb-dev
-
-      # - name: Install TBB MacOS
-      #   if: matrix.config.os == 'macos-latest'
-      #   run: brew install tbb
+          echo ${{ matrix.config.cc }}
+          echo ${{ matrix.config.os }}
+          ${{ matrix.config.cc }} --version 2>&1 || ${{ matrix.config.cc }} 2>&1 || true
 
       - name: Info
         run: echo ${{ github.ref }}
