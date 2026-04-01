@@ -254,7 +254,7 @@ DEFINE_TEST(test_perf_unknown_counter) {
 	bool caught = false;
 	try {
 		INSTRUMENT_PERF("this-counter-does-not-exist");
-#ifndef __linux__
+#ifdef _WIN32
 		throw profiler::profilerError("INSTRUMENT_PERF: unsupported counter 'this-counter-does-not-exist'");
 #endif
 	} catch (const profiler::profilerError &) {
