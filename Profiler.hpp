@@ -75,6 +75,7 @@ namespace {
 #include <unistd.h>
 #include <algorithm>
 #include <array>
+#include <numeric>
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
@@ -457,6 +458,15 @@ namespace profiler {
 			throw profilerError(message);
 		}
 
+		EventId lookupEventName(std::string_view name) const
+		{
+			std::shared_lock sharedLock(_namesMutex);
+			const auto it = _nameToEventId.find(name);
+			if (it == _nameToEventId.end())
+				throw profilerError("Event '" + std::string(name) + "' not registered");
+			return it->second;
+		}
+
 		void createPCF(const std::string &traceDirectory) const
 		{
 			// PCF File
@@ -487,10 +497,10 @@ namespace profiler {
 		}
 
 	private:
-		std::shared_mutex _namesMutex;               /**< mutex needed to write in the global file */
-		EventId _counter = maxUserEvent;             /**< counter for automatic function registration */
-		std::map<EventId, nameEntry> _namesEventMap; /**< map with the events names */
-		std::map<std::string, EventId> _nameToEventId; /**< reverse map: name → event ID (enables idempotent registration) */
+		mutable std::shared_mutex _namesMutex;                    /**< mutex needed to write in the global file */
+		EventId _counter = maxUserEvent;                          /**< counter for automatic function registration */
+		std::map<EventId, nameEntry> _namesEventMap;              /**< map with the events names */
+		std::map<std::string, EventId, std::less<>> _nameToEventId; /**< reverse map: name → event ID; std::less<> enables heterogeneous lookup with std::string_view */
 	}; // NameSet
 
 
@@ -880,12 +890,13 @@ namespace profiler {
 		}
 
 		/** Open a named hardware or software counter from the static table. */
-		static int openNamedCounter(std::string_view name, int groupFd)
+		static std::pair<int, EventId> openNamedCounter(std::string_view name, int groupFd)
 		{
 			const auto it = std::lower_bound(std::begin(allCounters), std::end(allCounters), name);
 			if (it == std::end(allCounters) || it->name != name)
 				throw profilerError("INSTRUMENT_PERF: unsupported counter '" + std::string(name) + "'");
-			return openPerfEvent(it->type, it->config, true, groupFd);
+			return {openPerfEvent(it->type, it->config, true, groupFd),
+			        infoGlobal._namesSet.lookupEventName(name)};
 		}
 
 		/** Returns a hint string when perf_event_paranoid blocks access.
@@ -944,7 +955,10 @@ namespace profiler {
 				// This may still fail with EACCES on locked-down systems.
 				if (uint64_t traceId = 0; std::ifstream(syscallsDir + "/" + entryName + "/id") >> traceId)
 					return traceId;
-				return 0;  // exists but cannot read ID
+				throw profilerError(
+					"INSTRUMENT_PERF: syscall tracepoint 'syscall:" + std::string(syscallName)
+					+ "' exists in tracefs but its id file is not readable"
+					" (requires paranoid <= 0 or CAP_PERFMON)");
 			}
 			throw profilerError("INSTRUMENT_PERF: unknown syscall 'syscall:" + std::string(syscallName) + "'");
 		}
@@ -957,15 +971,16 @@ namespace profiler {
 
 		    Returns -1 (with errno set) if the tracepoint exists but cannot be opened
 		    due to permissions. Throws profilerError if the syscall name is unknown. */
-		static int openSyscallTracepoint(std::string_view syscallName, int groupFd)
+		static std::pair<int, EventId> openSyscallTracepoint(std::string_view syscallName, int groupFd)
 		{
-			if (const uint64_t traceId = findSyscallTracepointId(syscallName); traceId != 0)
-				return openPerfEvent(PERF_TYPE_TRACEPOINT, traceId, false, groupFd);
-			return -1;  // tracepoint exists but ID is unreadable; caller will warn
+			const uint64_t traceId = findSyscallTracepointId(syscallName);
+			const EventId id = registerName("syscall:" + std::string(syscallName), "", 0, 0, 0);
+			return {openPerfEvent(PERF_TYPE_TRACEPOINT, traceId, false, groupFd), id};
 		}
 
-		/** Open one counter (named or syscall tracepoint) into the given group. */
-		int openOne(std::string_view name, int groupFd)
+		/** Open one counter (named or syscall tracepoint) into the given group.
+		    Returns the file descriptor and the profiler event ID for the counter. */
+		std::pair<int, EventId> openOne(std::string_view name, int groupFd)
 		{
 			static constexpr std::string_view syscallPrefix = "syscall:";
 			if (name.substr(0, syscallPrefix.size()) == syscallPrefix)
@@ -987,28 +1002,12 @@ namespace profiler {
 			_n = names.size();
 			_memberFds.fill(-1);
 
-			// Register event IDs by name.  registerEventName is idempotent by
-			// name, so all threads that hit the same call site get the same IDs.
-			{
-				size_t i = 0;
-				for (const char *name : names)
-					_ids[i++] = registerName(std::string(name), "", 0, 0, 0);
-			}
-
-			// Build group description once for use in error messages.
-			std::string groupDesc = "[";
-			for (const char *name : names)
-			{
-				if (groupDesc.size() > 1)
-					groupDesc += ", ";
-				groupDesc = groupDesc + "'" + name + "'";
-			}
-			groupDesc += ']';
-
+			size_t idx = 0;
 			size_t memberIdx = 0;
 			for (const char *name : names)
 			{
-				const int fd = openOne(name, _fd);
+				const auto [fd, id] = openOne(name, _fd);
+				_ids[idx++] = id;
 				if (_fd < 0 && fd >= 0)
 					_fd = fd;
 				else if (_fd >= 0 && fd >= 0)
@@ -1017,9 +1016,18 @@ namespace profiler {
 				{
 					const int err = errno;
 					closeAll();
+					const auto makeGroupDesc = [&names]() {
+						return std::accumulate(
+							names.begin(), names.end(),
+							std::string("["),
+							[](std::string acc, const char *n) {
+								if (acc.size() > 1) acc += ", ";
+								return acc + "'" + n + "'";
+							}) + ']';
+					};
 					throw profilerError(
 						"INSTRUMENT_PERF: failed to open counter '" + std::string(name)
-						+ "' in group " + groupDesc + ": "
+						+ "' in group " + makeGroupDesc() + ": "
 						+ strerror(err) + groupOpenHint(err));
 				}
 			}
