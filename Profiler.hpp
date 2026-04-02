@@ -162,6 +162,12 @@ namespace profiler {
 
 	constexpr size_t bSize = (1 << 20);  //! Default buffer size in bytes (1Mb)
 
+	/** Type used for event IDs and sub-value indices throughout the profiler. */
+	using EventId = uint16_t;
+
+	/** Type used for event measurement values stored in each EventEntry. */
+	using EventValue = uint32_t;
+
 	/** Custom error class to handle them if needed. */
 	class profilerError : public std::exception {
 		const std::string message;
@@ -179,9 +185,7 @@ namespace profiler {
 
 		This class will always have a file associated to it to flush all the
 		data when needed.  There will be 1 Buffer/Core in order to make the
-		tracing events registration completely lock free.
-		@tparam I buffer size to reserve in bytes */
-	template <size_t I>
+		tracing events registration completely lock free. */
 	class Buffer {
 
 		/** Header struct
@@ -210,11 +214,11 @@ namespace profiler {
 			make a right reconstruction latter. */
 		struct EventEntry {
 			const uint64_t _time;
-			const uint16_t _id;
+			const EventId  _id;
 			const uint16_t _core;
-			const uint32_t _value;
+			const EventValue _value;
 
-			EventEntry(uint16_t id, uint32_t value, uint64_t time, uint16_t core)
+			EventEntry(EventId id, EventValue value, uint64_t time, uint16_t core)
 				: _time(time)
 				, _id(id)
 				, _core(core)
@@ -222,14 +226,14 @@ namespace profiler {
 			{
 			}
 
-			explicit EventEntry(uint16_t id, uint32_t value)
+			explicit EventEntry(EventId id, EventValue value)
 				: EventEntry(id, value, getNanoseconds(), getCPUId())
 			{
 			}
 		};
 
 		/** Maximum size for the buffers = 1Mb */
-		static constexpr size_t _maxEntries = ( I + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);
+		static constexpr size_t _maxEntries = ( bSize + sizeof(EventEntry) - 1 ) / sizeof(EventEntry);
 
 		const std::string _fileName;      //< Name of the binary file with trace information
 		std::ofstream _file;		      //< fstream with file open; every write will be appended and binary. >/
@@ -293,7 +297,7 @@ namespace profiler {
 			_file.close(); // close the file only at the end.
 		}
 
-		void emplaceEvent(uint16_t id, uint32_t value)
+		void emplaceEvent(EventId id, EventValue value)
 		{
 			new (&_entries[_nEntries++]) EventEntry(id, value);
 
@@ -305,7 +309,7 @@ namespace profiler {
 				flushBuffer();
 		}
 
-		void emplaceMultipleEvents(const std::pair<uint16_t, uint32_t> *events, size_t count)
+		void emplaceMultipleEvents(const std::pair<EventId, EventValue> *events, size_t count)
 		{
 			const uint64_t t    = getNanoseconds();
 			const uint16_t core = static_cast<uint16_t>(getCPUId());
@@ -326,12 +330,11 @@ namespace profiler {
 
 	}; // Buffer
 
-	/** Name set thread save map container.
+	/** Name set thread safe map container.
 
 		This is a thread safe container to register the relation between event
-		name and id. This container is intend to be accessed only once/event to
+		name and id. This container is intended to be accessed only once/event to
 		register the name of the event. */
-	template <typename T>
 	class NameSet {
 
 		struct nameInfo
@@ -360,19 +363,19 @@ namespace profiler {
 
 		struct nameEntry : public nameInfo
 		{
-			std::map<T, nameInfo> _namesValuesMap {};
+			std::map<EventId, nameInfo> _namesValuesMap {};
 		};
 
 	public:
 		#undef max
-		static constexpr T maxUserEvent = std::numeric_limits<T>::max() / 2;
-		static constexpr T maxEvent = std::numeric_limits<T>::max();
+		static constexpr EventId maxUserEvent = std::numeric_limits<EventId>::max() / 2;
+		static constexpr EventId maxEvent = std::numeric_limits<EventId>::max();
 
-		T registerEventName(
+		EventId registerEventName(
 			std::string eventName,
 			const std::string &fileName = "profiler",
 			size_t line = 0,
-			T event = T()
+			EventId event = EventId()
 		) {
 			if (eventName.empty())
 			{
@@ -400,7 +403,7 @@ namespace profiler {
 
 			nameEntry entry = {eventName, fileName, line};
 
-			if (event == T())
+			if (event == EventId())
 				event = ++_counter;
 
 			auto it_pair = _namesEventMap.emplace(event, entry);
@@ -418,9 +421,9 @@ namespace profiler {
 			throw profilerError(message);
 		}
 
-		T registerValueName(
+		EventId registerValueName(
 			std::string valueName,
-			const std::string &fileName, size_t line, T event, uint16_t value
+			const std::string &fileName, size_t line, EventId event, EventId value
 		) {
 			if (valueName.empty())
 			{
@@ -484,10 +487,10 @@ namespace profiler {
 		}
 
 	private:
-		std::shared_mutex _namesMutex;       /**< mutex needed to write in the global file */
-		T _counter = maxUserEvent;               /**< counter for automatic function registration */
-		std::map<T, nameEntry> _namesEventMap;   /**< map with the events names */
-		std::map<std::string, T> _nameToEventId; /**< reverse map: name → event ID (enables idempotent registration) */
+		std::shared_mutex _namesMutex;               /**< mutex needed to write in the global file */
+		EventId _counter = maxUserEvent;             /**< counter for automatic function registration */
+		std::map<EventId, nameEntry> _namesEventMap; /**< map with the events names */
+		std::map<std::string, EventId> _nameToEventId; /**< reverse map: name → event ID (enables idempotent registration) */
 	}; // NameSet
 
 
@@ -504,14 +507,13 @@ namespace profiler {
 	   This is because it seems like on GNU/Linux the global variables are
 	   destructed after the main thread; but in MSWindows the Global variables
 	   seems to be removed before the main thread completes. */
-	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class BufferSet {
-		std::shared_mutex _mapMutex;                      /**< mutex needed to access the _eventsMap */
-		std::map<size_t, Buffer<I>> _eventsMap;           /**< This map contains the relation tid->id */
+		std::shared_mutex _mapMutex;             /**< mutex needed to access the _eventsMap */
+		std::map<size_t, Buffer> _eventsMap;     /**< This map contains the relation tid->id */
 
-		uint32_t _tcounter = 1;                           /**< tid counter always > 0 */
+		uint32_t _tcounter = 1;                  /**< tid counter always > 0 */
 
-		friend uint16_t registerName(const std::string &name, uint16_t value);
+		friend EventId registerName(const std::string &name, EventId value);
 
 	public:
 
@@ -556,7 +558,7 @@ namespace profiler {
 		   is seen for a first time this function creates the new entry in the
 		   map, construct the Buffer and assign an ordinal id for it.  Any
 		   optimization here will be very welcome. */
-		Buffer<I> &getThreadBuffer(size_t tid);
+		Buffer &getThreadBuffer(size_t tid);
 
 	}; // BufferSet
 
@@ -569,12 +571,11 @@ namespace profiler {
 		is not very accurate to use it to measure total thread
 		duration. However, it is the best we have until we can enforce some
 		thread hooks. */
-	template<size_t I>	 //< Maximum size for the buffers ~ 1Mb >/
 	class InfoThread {
 		const uint64_t _tid;
 
 	public:
-		Buffer<I> &eventsBuffer;
+		Buffer &eventsBuffer;
 
 		const uint32_t _id;
 
@@ -648,9 +649,9 @@ namespace profiler {
 
 	public:
 
-		static InfoThread<bSize> &getInfoThread()
+		static InfoThread &getInfoThread()
 		{
-			thread_local static InfoThread<bSize> threadInfo;
+			thread_local static InfoThread threadInfo;
 			return threadInfo;
 		}
 
@@ -694,11 +695,11 @@ namespace profiler {
 		const uint64_t startSystemTimePoint;
 		const std::string traceDirectory;
 
-		BufferSet<bSize> _buffersSet;                // Buffers register
-		NameSet<uint16_t> _namesSet; 		// Events names register
+		BufferSet _buffersSet;    // Buffers register
+		NameSet _namesSet;        // Events names register
 
-		const uint16_t threadEventID;
-		const uint16_t mutexID;
+		const EventId threadEventID;
+		const EventId mutexID;
 
 	};
 
@@ -713,10 +714,10 @@ namespace profiler {
 
 	   This registers a new pair eventName -> value wrapping Object oriented
 	   calls. */
-	inline uint16_t registerName(
+	inline EventId registerName(
 		const std::string &name,
 		const std::string &fileName, size_t line,
-		uint16_t event, uint16_t value
+		EventId event, EventId value
 	) {
 		if (value == 0)
 			return infoGlobal._namesSet.registerEventName(name, fileName, line, event);
@@ -732,7 +733,7 @@ namespace profiler {
 		the instrumentation macro.  The constructor emits an event that will be
 		paired with the equivalent one emitted in the destructor. */
 	class ProfilerGuard {
-		const uint16_t _id;  //< Event id for this guard. remembered to emit on the destructor
+		const EventId _id;  //< Event id for this guard. remembered to emit on the destructor
 
 	public:
 		// Profile guard should be unique and not transferable.
@@ -741,7 +742,7 @@ namespace profiler {
 		ProfilerGuard& operator=(const ProfilerGuard &) = delete;
 
 		//! Guard constructor
-		ProfilerGuard(uint16_t id, uint16_t value)
+		ProfilerGuard(EventId id, EventId value)
 			: _id(id)
 		{
 			assert(value != 0);
@@ -773,7 +774,7 @@ namespace profiler {
 			// Globals: 0 = no initialized, 1 = initialization in progress, 2 = already initialized
 			if (registered.compare_exchange_strong(expected, 1)) {
 
-				[[maybe_unused]] uint16_t wait_value
+				[[maybe_unused]] EventId wait_value
 					= registerName("Waiting", "", 0, infoGlobal.mutexID, waiting_value);
 				assert(waiting_value == wait_value);
 
@@ -813,11 +814,10 @@ namespace profiler {
 
 	private:
 		static inline std::atomic<unsigned char> registered = 0;
-		static constexpr uint16_t waiting_value = 1;                          /// Reserve the event 1 to blocked by a mutex
-		static inline std::atomic<unsigned int> _counter = waiting_value + 1; /// The lock counter starts after it
+		static constexpr EventId waiting_value = 1;                          /// Reserve the event 1 to blocked by a mutex
+		static inline std::atomic<EventId> _counter = waiting_value + 1;     /// The lock counter starts after it
 
-
-		unsigned int _id;
+		EventId _id;
 		std::mutex _lock;
 	};
 
@@ -850,7 +850,7 @@ namespace profiler {
 		int _fd = -1;
 
 		std::array<int, maxGroupSize>              _memberFds {};
-		std::array<uint16_t, maxGroupSize>         _ids {};
+		std::array<EventId, maxGroupSize>          _ids {};
 		size_t                                     _n = 0;
 		mutable std::array<uint64_t, 1 + maxGroupSize> _readBuf {};
 
@@ -992,7 +992,7 @@ namespace profiler {
 			{
 				if (groupDesc.size() > 1)
 					groupDesc += ", ";
-				groupDesc += '\'' + name + '\'';
+				groupDesc = groupDesc + "'" + name + "'";
 			}
 			groupDesc += ']';
 
@@ -1030,9 +1030,9 @@ namespace profiler {
 
 		/** Read all N counters in one syscall; returns absolute values since reset.
 		    Only valid entries [0.._n) are meaningful. */
-		std::array<uint32_t, maxGroupSize> readAll() const noexcept
+		std::array<EventValue, maxGroupSize> readAll() const noexcept
 		{
-			std::array<uint32_t, maxGroupSize> values {};
+			std::array<EventValue, maxGroupSize> values {};
 			const size_t expected = (1 + _n) * sizeof(uint64_t);
 			if (::read(_fd, _readBuf.data(), expected) != static_cast<ssize_t>(expected))
 				return values;
@@ -1041,17 +1041,17 @@ namespace profiler {
 			for (size_t i = 0; i < _n; ++i)
 			{
 				const uint64_t raw = _readBuf[i + 1];
-				values[i] = (raw > std::numeric_limits<uint32_t>::max())
-					? std::numeric_limits<uint32_t>::max()
-					: static_cast<uint32_t>(raw);
+				values[i] = (raw > std::numeric_limits<EventValue>::max())
+					? std::numeric_limits<EventValue>::max()
+					: static_cast<EventValue>(raw);
 			}
 			return values;
 		}
 
-		void emitAll(Buffer<bSize> &buf)
+		void emitAll(Buffer &buf)
 		{
-			const std::array<uint32_t, maxGroupSize> values = readAll();
-			std::array<std::pair<uint16_t, uint32_t>, maxGroupSize> events;
+			const std::array<EventValue, maxGroupSize> values = readAll();
+			std::array<std::pair<EventId, EventValue>, maxGroupSize> events;
 			for (size_t i = 0; i < _n; ++i)
 				events[i] = {_ids[i], values[i]};
 			buf.emplaceMultipleEvents(events.data(), _n);
@@ -1065,8 +1065,7 @@ namespace profiler {
 
 	// =================== BufferSet ===========================================
 
-	template <size_t I>
-	Buffer<I> &BufferSet<I>::getThreadBuffer(size_t tid)
+	inline Buffer &BufferSet::getThreadBuffer(size_t tid)
 	{
 		// We attempt to take the read lock first. If this tid was
 		// already used, the buffer must be already created, and we
@@ -1097,8 +1096,7 @@ namespace profiler {
 	}
 
 	// =================== InfoThread ==========================================
-	template <size_t I>
-	InfoThread<I>::InfoThread()
+	inline InfoThread::InfoThread()
 		: _tid(std::hash<std::thread::id>()(std::this_thread::get_id()))
 		, eventsBuffer(infoGlobal._buffersSet.getThreadBuffer(_tid))
 		, _id(eventsBuffer._header._id)
@@ -1108,8 +1106,7 @@ namespace profiler {
 			eventsBuffer.emplaceEvent(infoGlobal.threadEventID, 1);
 	}
 
-	template <size_t I>
-	InfoThread<I>::~InfoThread()
+	inline InfoThread::~InfoThread()
 	{
 		if (_id > 1)
 			eventsBuffer.emplaceEvent(infoGlobal.threadEventID, 0);
@@ -1138,7 +1135,7 @@ namespace profiler {
    emitted on entry (must be != 0). The end event (value = 0) is emitted
    automatically when the scope exits. */
 #define INSTRUMENT_SCOPE(TAG, VALUE)                                                \
-	static const uint16_t CAT(__profiler_scope_id_,TAG) =                          \
+	static const profiler::EventId CAT(__profiler_scope_id_,TAG) =                 \
 		profiler::registerName(#TAG, __FILE__, __LINE__, 0, 0);                     \
 	profiler::ProfilerGuard CAT(__profiler_guard_,TAG)(                           \
 		CAT(__profiler_scope_id_,TAG), VALUE);
@@ -1150,7 +1147,7 @@ namespace profiler {
    An optional string argument sets the value name; otherwise __FILE__:__LINE__
    is used. */
 #define INSTRUMENT_SCOPE_UPDATE(TAG, VALUE, ...)                                    \
-	static const uint16_t CAT(__profiler_scope_update_,__LINE__) =                 \
+	static const profiler::EventId CAT(__profiler_scope_update_,__LINE__) =        \
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__,        \
 			CAT(__profiler_scope_id_,TAG), VALUE);                                  \
 	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(                  \
@@ -1165,9 +1162,9 @@ namespace profiler {
 #define INSTRUMENT_FUNCTION(...)										\
 	static const std::string __profiler_function_name =                       \
 		std::string_view(__VA_ARGS__).empty() ? FUNC_NAME : std::string(__VA_ARGS__); \
-	static const uint16_t __profiler_function_id =							\
+	static const profiler::EventId __profiler_function_id =						\
 		profiler::registerName(__profiler_function_name, __FILE__, __LINE__, 0, 0);  \
-    static uint16_t CAT(__profiler_function_,__LINE__) =				\
+    static profiler::EventId CAT(__profiler_function_,__LINE__) =			\
         profiler::registerName(__func__, __FILE__, __LINE__, __profiler_function_id, 1); \
 	profiler::ProfilerGuard __guard(__profiler_function_id, CAT(__profiler_function_,__LINE__));
 
@@ -1182,7 +1179,7 @@ namespace profiler {
 	is used.
 	@param VALUE the numeric value for the event (must be != 0 and != 1). */
 #define INSTRUMENT_FUNCTION_UPDATE(VALUE, ...)							\
-	static const uint16_t CAT(__profiler_function_,__LINE__) =				\
+	static const profiler::EventId CAT(__profiler_function_,__LINE__) =			\
 		profiler::registerName(std::string(__VA_ARGS__), __FILE__, __LINE__, __profiler_function_id, VALUE); \
 	profiler::Global::getInfoThread().eventsBuffer.emplaceEvent(      \
 		__profiler_function_id, CAT(__profiler_function_,__LINE__)		\
