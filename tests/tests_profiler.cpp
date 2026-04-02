@@ -26,6 +26,7 @@
 #include <functional>
 #include <string>
 
+
 // ============================================================
 // Auto-registration infrastructure
 // ============================================================
@@ -278,10 +279,16 @@ static void perf_thread_worker(size_t id) {
 
 DEFINE_TEST(test_perf_multithreaded) {
 	std::vector<std::thread> threads;
+	std::vector<std::exception_ptr> exceptions(4);
 	for (size_t i = 0; i < 4; ++i)
-		threads.emplace_back(perf_thread_worker, i);
+		threads.emplace_back([i, &exceptions]() {
+			try { perf_thread_worker(i); }
+			catch (...) { exceptions[i] = std::current_exception(); }
+		});
 	for (auto & t : threads)
 		t.join();
+	for (const std::exception_ptr & e : exceptions)
+		if (e) std::rethrow_exception(e);
 }
 
 // INSTRUMENT_PERF: syscall tracepoint — count write() calls between two sample points
@@ -307,6 +314,33 @@ DEFINE_TEST(test_perf_syscall_unknown) {
 		return;
 	}
 	throw std::runtime_error("Expected profilerError for unknown syscall tracepoint");
+}
+
+// INSTRUMENT_PERF: multiple counters in one kernel event group, emitting
+// separate events that share the same timestamp and core ID
+DEFINE_TEST(test_perf_multi) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_PERF("cpu-cycles", "instructions");
+	std::vector<size_t> v(1000);
+	std::iota(v.begin(), v.end(), 0);
+	size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+	(void)sum;
+	INSTRUMENT_PERF("cpu-cycles", "instructions");
+}
+
+// INSTRUMENT_PERF: incompatible counter types in a group (hardware + software)
+// must throw profilerError with a precise message from the perf API.
+// On accessible systems the kernel rejects the group with EINVAL; on
+// locked-down systems the leader itself fails with EACCES.  Either way a
+// profilerError is thrown — failures are never silent.
+DEFINE_TEST(test_perf_incompatible_group) {
+	INSTRUMENT_FUNCTION();
+	try {
+		INSTRUMENT_PERF("cpu-cycles", "task-clock");
+	} catch (const profiler::profilerError &) {
+		return;
+	}
+	throw std::runtime_error("Expected profilerError for incompatible counter group");
 }
 
 // ============================================================
