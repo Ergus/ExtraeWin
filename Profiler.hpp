@@ -667,6 +667,15 @@ namespace profiler {
 			if (!std::filesystem::create_directory(traceDirectory))
 				throw profilerError("Cannot create traces directory: " + traceDirectory);
 
+#ifdef __linux__
+			// Pre-register all known perf counter names so their IDs are assigned
+			// deterministically at startup, regardless of which counters are actually
+			// opened at runtime.  Syscall tracepoints are dynamic and registered on
+			// first use by PerfCounter.
+			for (const PerfCounterSpec &spec : allCounters)
+				_namesSet.registerEventName(std::string(spec.name));
+#endif
+
 			// getInfoThread() is NOT called here: InfoThread's constructor calls
 			// getInfoGlobal(), which would re-enter this constructor and trigger
 			// a recursive_init_error. InfoThread initializes lazily on the first
