@@ -380,15 +380,23 @@ namespace profiler {
 				eventName = p.filename().string()+":"+std::to_string(line);
 			}
 
-			std::lock_guard<std::mutex> lk(_namesMutex);
+			// Fast path: name already registered — shared lock suffices.
+			{
+				std::shared_lock sharedLock(_namesMutex);
+				const auto it = _nameToEventId.find(eventName);
+				if (it != _nameToEventId.end())
+					return it->second;
+			}
 
-			// If this name is already registered return the existing ID.
-			// This makes registration idempotent by name, which is required for
-			// perf counter names that are registered from thread_local constructors
-			// (multiple threads hitting the same name must share one event ID).
-			const auto nameIt = _nameToEventId.find(eventName);
-			if (nameIt != _nameToEventId.end())
-				return nameIt->second;
+			// Slow path: first time seeing this name — exclusive access to insert.
+			std::unique_lock exclusiveLock(_namesMutex);
+
+			// Double-check: another thread may have inserted between the two locks.
+			{
+				const auto it = _nameToEventId.find(eventName);
+				if (it != _nameToEventId.end())
+					return it->second;
+			}
 
 			nameEntry entry = {eventName, fileName, line};
 
@@ -420,7 +428,7 @@ namespace profiler {
 				valueName = p.filename().string()+":"+std::to_string(line);
 			}
 
-			std::lock_guard<std::mutex> lk(_namesMutex);
+			std::lock_guard<std::shared_mutex> lk(_namesMutex);
 			auto itEvent = _namesEventMap.find(event);
 
 			if (itEvent == _namesEventMap.end())
@@ -476,7 +484,7 @@ namespace profiler {
 		}
 
 	private:
-		std::mutex _namesMutex;	             /**< mutex needed to write in the global file */
+		std::shared_mutex _namesMutex;       /**< mutex needed to write in the global file */
 		T _counter = maxUserEvent;               /**< counter for automatic function registration */
 		std::map<T, nameEntry> _namesEventMap;   /**< map with the events names */
 		std::map<std::string, T> _nameToEventId; /**< reverse map: name → event ID (enables idempotent registration) */
