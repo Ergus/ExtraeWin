@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: alpine:latest
-      options: --volume /sys/kernel/tracing:/sys/kernel/tracing:ro
+      options: --privileged --volume /sys/kernel/tracing:/sys/kernel/tracing:ro
     timeout-minutes: 5
 
     steps:
