@@ -573,35 +573,6 @@ namespace profiler {
 	}; // BufferSet
 
 
-	/** Class for thread local singleton.
-
-		This class will be allocated in a copy/thead in order to perform the
-		events emission completely thread free.  The constructor of this object
-		takes place the first time an event is emitted from some thread; so it
-		is not very accurate to use it to measure total thread
-		duration. However, it is the best we have until we can enforce some
-		thread hooks. */
-	class InfoThread {
-		const uint64_t _tid;
-
-	public:
-		Buffer &eventsBuffer;
-
-		const uint32_t _id;
-
-		/** Thread local Info initialization.
-
-			The class is actually constructed the first time the thread local
-			variables is accesses. But the buffer is not destroyed on thread
-			finalization because the same threadID may be reused in the future.
-			This emits an event of type 2 and value tid (which is always bigger
-			than zero). */
-		InfoThread();
-
-		~InfoThread();
-
-	}; // InfoThread
-
 #ifdef __linux__
 	/** Descriptor for a supported perf event: its perf list name, type, and config.
 	    Entries must be kept sorted by name so the constructor can use
@@ -638,7 +609,46 @@ namespace profiler {
 		{"stalled-cycles-frontend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_FRONTEND},
 		{"task-clock",              PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK},
 	};
-#endif // __linux__
+
+	class PerfCounter;  // full definition after Global is complete
+#endif
+
+	/** Class for thread local singleton.
+
+		This class will be allocated in a copy/thead in order to perform the
+		events emission completely thread free.  The constructor of this object
+		takes place the first time an event is emitted from some thread; so it
+		is not very accurate to use it to measure total thread
+		duration. However, it is the best we have until we can enforce some
+		thread hooks. */
+	class InfoThread {
+		const uint64_t _tid;
+	public:
+		Buffer &eventsBuffer;
+
+		const uint32_t _id;
+
+		/** Thread local Info initialization.
+
+			The class is actually constructed the first time the thread local
+			variables is accesses. But the buffer is not destroyed on thread
+			finalization because the same threadID may be reused in the future.
+			This emits an event of type 2 and value tid (which is always bigger
+			than zero). */
+		InfoThread();
+
+		~InfoThread();
+
+#ifdef __linux__
+		/** Returns the shared PerfCounter for the given counter names on this thread,
+		    creating and resetting it once if it does not yet exist.
+		    All INSTRUMENT_PERF call sites with the same names share one FD and one
+		    reset point, so emitted values are thread-absolute. */
+		PerfCounter &getOrCreatePerfCounter(std::initializer_list<const char *> names);
+	private:
+		std::map<std::vector<std::string>, std::unique_ptr<PerfCounter>> _perfCounters;
+#endif
+	}; // InfoThread
 
 
 	/** Info container with global variables.
@@ -899,16 +909,13 @@ namespace profiler {
 			        infoGlobal._namesSet.lookupEventName(name)};
 		}
 
-		/** Returns a hint string when perf_event_paranoid blocks access.
-		    paranoid > 2 blocks all perf_event_open; paranoid > 0 blocks
-		    syscall tracepoints.  CAP_PERFMON overrides all levels. */
-		static std::string perfParanoidHint()
+		/** Reads /proc/sys/kernel/perf_event_paranoid. Returns -1 (most permissive)
+		    if the file cannot be read. */
+		static int readParanoid() noexcept
 		{
-			if (int paranoid = 0; std::ifstream("/proc/sys/kernel/perf_event_paranoid") >> paranoid && paranoid > 0)
-				return " (perf_event_paranoid=" + std::to_string(paranoid)
-				       + "; hardware/software counters require paranoid <= 2,"
-				       " syscall tracepoints require paranoid <= 0 (or CAP_PERFMON))";
-			return {};
+			int val = -1;
+			std::ifstream("/proc/sys/kernel/perf_event_paranoid") >> val;
+			return val;
 		}
 
 		/** Returns a hint string for common group-open errno values. */
@@ -917,8 +924,9 @@ namespace profiler {
 			if (err == EINVAL)
 				return " (counters may be incompatible types;"
 				       " hardware and software counters cannot be grouped on most kernels)";
-			if (err == EACCES)
-				return perfParanoidHint();
+			if (err == ENOENT)
+				return " (hardware PMU not available;"
+				       " this counter may not be supported by the CPU or hypervisor)";
 			return {};
 		}
 
@@ -928,9 +936,8 @@ namespace profiler {
 		    cannot live in a static table; they must be read from tracefs at runtime.
 
 		    Returns the ID (always > 0) if found and readable.
-		    Returns 0 if the tracepoint exists but the id file is not readable
-		    (e.g. insufficient permissions).
-		    Throws profilerError if no tracing filesystem exposes this syscall name. */
+		    Throws profilerError if the id file is not readable (e.g. paranoid > 0)
+		    or if no tracing filesystem exposes this syscall name. */
 		static uint64_t findSyscallTracepointId(std::string_view syscallName)
 		{
 			const std::string entryName = "sys_enter_" + std::string(syscallName);
@@ -996,17 +1003,73 @@ namespace profiler {
 				if (_memberFds[i] >= 0) { ::close(_memberFds[i]); _memberFds[i] = -1; }
 		}
 
+		/** Returns the human-readable PMU class name for a PERF_TYPE_* constant. */
+		static std::string_view typeName(uint32_t type) noexcept
+		{
+			switch (type)
+			{
+				case PERF_TYPE_HARDWARE:   return "hardware";
+				case PERF_TYPE_SOFTWARE:   return "software";
+				case PERF_TYPE_TRACEPOINT: return "tracepoint";
+				default:                   return "unknown";
+			}
+		}
+
+		/** Returns the PERF_TYPE_* for a counter name, validating that the name is
+		    known.  Syscall tracepoints ("syscall:X") return PERF_TYPE_TRACEPOINT
+		    without checking whether the specific syscall exists in tracefs (that
+		    check is deferred to findSyscallTracepointId).
+		    Throws profilerError for unrecognised named counters. */
+		static uint32_t counterType(std::string_view name)
+		{
+			static constexpr std::string_view syscallPrefix = "syscall:";
+			if (name.substr(0, syscallPrefix.size()) == syscallPrefix)
+				return PERF_TYPE_TRACEPOINT;
+			const auto it = std::lower_bound(std::begin(allCounters), std::end(allCounters), name);
+			if (it == std::end(allCounters) || it->name != name)
+				throw profilerError("INSTRUMENT_PERF: unsupported counter '" + std::string(name) + "'");
+			return it->type;
+		}
+
 	public:
-		explicit PerfCounter(std::initializer_list<const char *> names)
+		explicit PerfCounter(const std::vector<std::string> &names)
 		{
 			_n = names.size();
 			_memberFds.fill(-1);
 
+			// Pass 1: validate names and check group type compatibility.
+			// All counters in a perf event group must share the same PMU
+			// (hardware, software, or tracepoint — mixing is not supported).
+			uint32_t groupType = std::numeric_limits<uint32_t>::max();
+			for (const std::string &name : names)
+			{
+				const uint32_t type = counterType(std::string_view(name));
+				if (groupType == std::numeric_limits<uint32_t>::max())
+					groupType = type;
+				else if (type != groupType)
+					throw profilerError(
+						"INSTRUMENT_PERF: cannot mix " + std::string(typeName(groupType))
+						+ " and " + std::string(typeName(type))
+						+ " counters in one group (different PMUs)");
+			}
+
+			// Pass 2: check perf_event_paranoid against the required level.
+			const int paranoid = readParanoid();
+			if (groupType == PERF_TYPE_TRACEPOINT && paranoid > 0)
+				throw profilerError(
+					"INSTRUMENT_PERF: syscall tracepoints require perf_event_paranoid <= 0"
+					" (current: " + std::to_string(paranoid) + "; or grant CAP_PERFMON)");
+			if (groupType != PERF_TYPE_TRACEPOINT && paranoid > 2)
+				throw profilerError(
+					"INSTRUMENT_PERF: hardware/software counters require perf_event_paranoid <= 2"
+					" (current: " + std::to_string(paranoid) + "; or grant CAP_PERFMON)");
+
+			// Pass 3: open FDs.
 			size_t idx = 0;
 			size_t memberIdx = 0;
-			for (const char *name : names)
+			for (const std::string &name : names)
 			{
-				const auto [fd, id] = openOne(name, _fd);
+				const auto [fd, id] = openOne(std::string_view(name), _fd);
 				_ids[idx++] = id;
 				if (_fd < 0 && fd >= 0)
 					_fd = fd;
@@ -1020,13 +1083,13 @@ namespace profiler {
 						return std::accumulate(
 							names.begin(), names.end(),
 							std::string("["),
-							[](std::string acc, const char *n) {
+							[](std::string acc, const std::string &n) {
 								if (acc.size() > 1) acc += ", ";
 								return acc + "'" + n + "'";
 							}) + ']';
 					};
 					throw profilerError(
-						"INSTRUMENT_PERF: failed to open counter '" + std::string(name)
+						"INSTRUMENT_PERF: failed to open counter '" + name
 						+ "' in group " + makeGroupDesc() + ": "
 						+ strerror(err) + groupOpenHint(err));
 				}
@@ -1067,6 +1130,9 @@ namespace profiler {
 
 		void emitAll(Buffer &buf)
 		{
+			if (!valid())
+				return;
+
 			const std::array<EventValue, maxGroupSize> values = readAll();
 			std::array<std::pair<EventId, EventValue>, maxGroupSize> events;
 			for (size_t i = 0; i < _n; ++i)
@@ -1074,7 +1140,6 @@ namespace profiler {
 			buf.emplaceMultipleEvents(events.data(), _n);
 		}
 	};
-#endif // __linux__
 
 	// ==================================================
 	// Outline function definitions (depend on Global).
@@ -1128,6 +1193,22 @@ namespace profiler {
 		if (_id > 1)
 			eventsBuffer.emplaceEvent(infoGlobal.threadEventID, 0);
 	}
+
+	inline PerfCounter &InfoThread::getOrCreatePerfCounter(
+		std::initializer_list<const char *> names)
+	{
+		std::vector<std::string> key;
+		key.reserve(names.size());
+		for (const char *name : names)
+			key.emplace_back(name);
+		std::sort(key.begin(), key.end());
+		const auto it = _perfCounters.find(key);
+		if (it != _perfCounters.end())
+			return *it->second;
+		auto [newIt, ok] = _perfCounters.emplace(key, std::make_unique<PerfCounter>(key));
+		return *newIt->second;
+	}
+#endif // __linux__
 
 
 } // profiler
@@ -1223,15 +1304,14 @@ namespace profiler {
 #define PROFILER_NARGS(...) \
 	PROFILER_NARGS_I(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 #define PROFILER_NARGS_I(_1,_2,_3,_4,_5,_6,_7,_8,N,...) N
-#define INSTRUMENT_PERF(...)                                                     \
-	{                                                                            \
-		static_assert(PROFILER_NARGS(__VA_ARGS__) <= 4,                          \
-			"INSTRUMENT_PERF: at most 4 counters per call");                     \
-		thread_local static profiler::PerfCounter                                \
-			CAT(__profiler_perf_ctr_, __LINE__)({__VA_ARGS__});                  \
-		if (CAT(__profiler_perf_ctr_, __LINE__).valid())                         \
-			CAT(__profiler_perf_ctr_, __LINE__).emitAll(                         \
-				profiler::Global::getInfoThread().eventsBuffer);                  \
+#define INSTRUMENT_PERF(...)                                                          \
+	{                                                                                 \
+		static_assert(PROFILER_NARGS(__VA_ARGS__) <= 4,                               \
+			"INSTRUMENT_PERF: at most 4 counters per call");                          \
+		thread_local static profiler::PerfCounter &                                   \
+			CAT(__profiler_perf_ctr_, __LINE__) =                                     \
+				profiler::Global::getInfoThread().getOrCreatePerfCounter({__VA_ARGS__}); \
+		CAT(__profiler_perf_ctr_, __LINE__).emitAll(profiler::Global::getInfoThread().eventsBuffer);                       \
 	}
 #else
 #define INSTRUMENT_PERF(...)
