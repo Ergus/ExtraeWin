@@ -1141,6 +1141,54 @@ namespace profiler {
 		}
 	};
 
+	inline PerfCounter &InfoThread::getOrCreatePerfCounter(
+		std::initializer_list<const char *> names)
+	{
+		std::vector<std::string> key;
+		key.reserve(names.size());
+		for (const char *name : names)
+			key.emplace_back(name);
+		std::sort(key.begin(), key.end());
+
+		const auto it = _perfCounters.find(key);
+		if (it != _perfCounters.end())
+			return *it->second;
+
+		// Reject any new group that shares a counter name with an existing group
+		// but is not identical to it.  Two independent groups that count the same
+		// event produce independent FDs with different reset points, making their
+		// values incomparable in the trace.
+		const auto formatGroup = [](const std::vector<std::string> &v) {
+			std::string s = "[";
+			for (size_t i = 0; i < v.size(); ++i) {
+				if (i > 0) s += ", ";
+				s += "'" + v[i] + "'";
+			}
+			return s + "]";
+		};
+
+		for (const auto &[existingKey, ignored] : _perfCounters)
+		{
+			std::vector<std::string> overlap;
+			std::set_intersection(
+				key.begin(), key.end(),
+				existingKey.begin(), existingKey.end(),
+				std::back_inserter(overlap));
+			if (!overlap.empty())
+				throw profilerError(
+					"INSTRUMENT_PERF: counter group " + formatGroup(key)
+					+ " overlaps with existing group " + formatGroup(existingKey)
+					+ " on counter(s) " + formatGroup(overlap)
+					+ "; each counter name must belong to at most one group per thread"
+					" — use the identical counter combination at every call site"
+					" that includes " + formatGroup(overlap));
+		}
+
+		auto [newIt, ok] = _perfCounters.emplace(key, std::make_unique<PerfCounter>(key));
+		return *newIt->second;
+	}
+#endif // __linux__
+
 	// ==================================================
 	// Outline function definitions (depend on Global).
 	// ==================================================
@@ -1193,54 +1241,6 @@ namespace profiler {
 		if (_id > 1)
 			eventsBuffer.emplaceEvent(infoGlobal.threadEventID, 0);
 	}
-
-	inline PerfCounter &InfoThread::getOrCreatePerfCounter(
-		std::initializer_list<const char *> names)
-	{
-		std::vector<std::string> key;
-		key.reserve(names.size());
-		for (const char *name : names)
-			key.emplace_back(name);
-		std::sort(key.begin(), key.end());
-
-		const auto it = _perfCounters.find(key);
-		if (it != _perfCounters.end())
-			return *it->second;
-
-		// Reject any new group that shares a counter name with an existing group
-		// but is not identical to it.  Two independent groups that count the same
-		// event produce independent FDs with different reset points, making their
-		// values incomparable in the trace.
-		const auto formatGroup = [](const std::vector<std::string> &v) {
-			std::string s = "[";
-			for (size_t i = 0; i < v.size(); ++i) {
-				if (i > 0) s += ", ";
-				s += "'" + v[i] + "'";
-			}
-			return s + "]";
-		};
-
-		for (const auto &[existingKey, ignored] : _perfCounters)
-		{
-			std::vector<std::string> overlap;
-			std::set_intersection(
-				key.begin(), key.end(),
-				existingKey.begin(), existingKey.end(),
-				std::back_inserter(overlap));
-			if (!overlap.empty())
-				throw profilerError(
-					"INSTRUMENT_PERF: counter group " + formatGroup(key)
-					+ " overlaps with existing group " + formatGroup(existingKey)
-					+ " on counter(s) " + formatGroup(overlap)
-					+ "; each counter name must belong to at most one group per thread"
-					" — use the identical counter combination at every call site"
-					" that includes " + formatGroup(overlap));
-		}
-
-		auto [newIt, ok] = _perfCounters.emplace(key, std::make_unique<PerfCounter>(key));
-		return *newIt->second;
-	}
-#endif // __linux__
 
 
 } // profiler
