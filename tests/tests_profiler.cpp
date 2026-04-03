@@ -286,7 +286,7 @@ DEFINE_TEST(test_perf_multithreaded) {
 }
 
 // INSTRUMENT_PERF: task-clock measured around I/O operations
-DEFINE_TEST(test_perf_syscall_write) {
+DEFINE_TEST(test_perf_io) {
 	INSTRUMENT_FUNCTION();
 	INSTRUMENT_PERF("task-clock");
 	for (int i = 0; i < 5; ++i) {
@@ -308,6 +308,25 @@ DEFINE_TEST(test_perf_syscall_unknown) {
 		return;
 	}
 	throw std::runtime_error("Expected profilerError for unknown syscall tracepoint");
+}
+
+// INSTRUMENT_PERF: syscall tracepoint counting write() calls around actual I/O.
+// Requires perf_event_paranoid <= 0 or CAP_PERFMON; skipped gracefully otherwise.
+DEFINE_TEST(test_perf_syscall_tracepoint) {
+	INSTRUMENT_FUNCTION();
+#ifndef __linux__
+	return;
+#endif
+	try {
+		INSTRUMENT_PERF("syscall:write");
+		for (int i = 0; i < 5; ++i) {
+			std::cerr.write("x", 1);
+			std::cerr.flush();
+		}
+		INSTRUMENT_PERF("syscall:write");
+	} catch (const profiler::profilerError &) {
+		return;  // tracepoints require perf_event_paranoid <= 0 or CAP_PERFMON
+	}
 }
 
 // INSTRUMENT_PERF: multiple software counters in one kernel event group, emitting
