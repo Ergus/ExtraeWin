@@ -46,7 +46,7 @@ jobs:
 
       - name: Allow perf counters
         if: runner.os == 'Linux'
-        run: echo 2 | sudo tee /proc/sys/kernel/perf_event_paranoid
+        run: echo 0 | sudo tee /proc/sys/kernel/perf_event_paranoid
 
       - name: Test
         working-directory: ${{github.workspace}}/build
@@ -74,7 +74,7 @@ jobs:
         run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
 
       - name: Allow perf counters
-        run: echo 2 | sudo tee /proc/sys/kernel/perf_event_paranoid
+        run: echo 0 | sudo tee /proc/sys/kernel/perf_event_paranoid
 
       - name: Test
         working-directory: ${{github.workspace}}/build
@@ -115,7 +115,7 @@ jobs:
         run: cmake --build build
 
       - name: Allow perf counters
-        run: echo 2 | tee /proc/sys/kernel/perf_event_paranoid || true
+        run: echo 0 | tee /proc/sys/kernel/perf_event_paranoid || true
 
       - name: Test
         working-directory: build
