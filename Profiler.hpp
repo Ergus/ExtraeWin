@@ -1144,10 +1144,7 @@ namespace profiler {
 	inline PerfCounter &InfoThread::getOrCreatePerfCounter(
 		std::initializer_list<const char *> names)
 	{
-		std::vector<std::string> key;
-		key.reserve(names.size());
-		for (const char *name : names)
-			key.emplace_back(name);
+		std::vector<std::string> key(names.begin(), names.end());
 		std::sort(key.begin(), key.end());
 
 		const auto it = _perfCounters.find(key);
