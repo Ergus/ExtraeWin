@@ -374,8 +374,12 @@ DEFINE_TEST(test_perf_identical_groups) {
 // INSTRUMENT_PERF: two groups sharing a counter name — must throw profilerError
 // on the second group's first use, because the same counter in two groups would
 // produce independent FDs with different reset points, making values incomparable.
+// On non-Linux INSTRUMENT_PERF is a no-op so there is nothing to test.
 DEFINE_TEST(test_perf_overlapping_groups) {
 	INSTRUMENT_FUNCTION();
+#ifndef __linux__
+	return;
+#endif
 	try {
 		INSTRUMENT_PERF("task-clock", "page-faults");
 		INSTRUMENT_PERF("task-clock", "context-switches");  // "task-clock" already in group above
