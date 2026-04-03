@@ -359,6 +359,18 @@ DEFINE_TEST(test_perf_hardware_multi) {
 	}
 }
 
+// INSTRUMENT_PERF: identical counter combination at two call sites — must reuse
+// the same group FD without error.
+DEFINE_TEST(test_perf_identical_groups) {
+	INSTRUMENT_FUNCTION();
+	INSTRUMENT_PERF("task-clock", "page-faults");
+	std::vector<size_t> v(1000);
+	std::iota(v.begin(), v.end(), 0);
+	size_t sum = std::accumulate(v.begin(), v.end(), size_t{0});
+	(void)sum;
+	INSTRUMENT_PERF("task-clock", "page-faults");
+}
+
 // INSTRUMENT_PERF: two groups sharing a counter name — must throw profilerError
 // on the second group's first use, because the same counter in two groups would
 // produce independent FDs with different reset points, making values incomparable.
